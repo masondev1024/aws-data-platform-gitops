@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-pipeline-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: data-pipeline-app
+  template:
+    metadata:
+      labels:
+        app: data-pipeline-app
+    spec:
+      containers:
+        - name: app
+          image: data-pipeline-app:latest
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
