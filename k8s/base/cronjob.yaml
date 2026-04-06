@@ -1,0 +1,20 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: raffle-draw-job
+spec:
+  schedule: "* * * * *" # 매 1분마다 실행
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: draw-worker
+            image: 486053612615.dkr.ecr.eu-west-2.amazonaws.com/my-raffle-app:v1
+            command: ["python", "draw_winner.py"]
+            envFrom:
+            - configMapRef:
+                name: raffle-config
+            - secretRef:
+                name: raffle-secret
+          restartPolicy: OnFailure
