@@ -18,13 +18,13 @@ variable "aws_region" {
 variable "github_owner" {
   description = "GitHub owner or organization name"
   type        = string
-  default     = "yooseongjin527"
+  default     = "masondev1024"
 }
 
 variable "github_repo" {
   description = "GitHub repository name"
   type        = string
-  default     = "asac_de2_infra_1st"
+  default     = "my-data-platform"
 }
 
 variable "github_branch" {
