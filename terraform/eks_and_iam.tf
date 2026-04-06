@@ -62,8 +62,8 @@ resource "aws_eks_node_group" "main" {
   instance_types  = ["t3.medium"]
   scaling_config {
     desired_size = 2
-    max_size     = 10
-    min_size     = 1
+    max_size     = 2
+    min_size     = 2
   }
   depends_on = [
     aws_iam_role_policy_attachment.node_policy,

@@ -1,0 +1,23 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: raffle-ingress
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    # 카나리아 가중치 설정 (현재 v1: 100%, v2: 0%)
+    alb.ingress.kubernetes.io/actions.canary-routing: >
+      {"type":"forward","forwardConfig":{"targetGroups":[{"serviceName":"raffle-svc-v1","servicePort":"80","weight":100},{"serviceName":"raffle-svc-v2","servicePort":"80","weight":0}]}}
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: canary-routing
+                port: 
+                  name: use-annotation

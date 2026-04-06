@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>My Page</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50">
+    <div class="max-w-2xl mx-auto py-16 px-4">
+        <div class="flex items-center justify-between mb-12">
+            <h1 class="text-3xl font-black italic">MY PAGE</h1>
+            <a href="/" class="text-sm font-bold text-gray-400 hover:text-black">HOME ⬅️</a>
+        </div>
+        
+        <div class="bg-white rounded-2xl p-8 shadow-sm border border-gray-100">
+            <div class="flex items-center mb-10">
+                <div class="w-16 h-16 bg-gray-200 rounded-full mr-4"></div>
+                <div>
+                    <h2 class="text-xl font-bold">{{ user_id }}</h2>
+                    <p class="text-gray-400 text-sm">PRO MEMBER</p>
+                </div>
+            </div>
+
+            <h3 class="font-bold mb-6 text-gray-900 border-b pb-4">나의 응모 내역</h3>
+            <div class="space-y-6">
+                {% if not history %}
+                    <p class="text-center py-10 text-gray-400">응모 내역이 없습니다.</p>
+                {% else %}
+                    {% for item in history %}
+                    <div class="flex justify-between items-center">
+                        <div>
+                            <p class="font-bold">{{ item.title }}</p>
+                            <p class="text-xs text-gray-400">{{ item.apply_date }}</p>
+                        </div>
+                        <span class="text-sm font-bold {% if '대기' in item.status %}text-blue-500{% else %}text-gray-300{% endif %}">
+                            {{ item.status }}
+                        </span>
+                    </div>
+                    {% endfor %}
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</body>
+</html>
