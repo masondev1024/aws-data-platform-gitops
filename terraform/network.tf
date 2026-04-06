@@ -38,7 +38,10 @@ resource "aws_subnet" "app_private_a" {
   cidr_block        = cidrsubnet(var.vpc_cidr, 6, 1)
   availability_zone = data.aws_availability_zones.available.names[0]
   tags              = { Name = "sbn-app-a"
-			"kubernetes.io/role/internal-elb" = "1" }
+			"kubernetes.io/role/internal-elb" = "1"
+			"karpenter.sh/discovery"                    = "data-engineer-cluster"
+    "kubernetes.io/cluster/data-engineer-cluster" = "shared" # ALB 및 기타 AWS 컨트롤러 연동을 위한 명시적 태그 
+  }
 }
 
 resource "aws_subnet" "app_private_b" {
@@ -46,7 +49,10 @@ resource "aws_subnet" "app_private_b" {
   cidr_block        = cidrsubnet(var.vpc_cidr, 6, 2)
   availability_zone = data.aws_availability_zones.available.names[1]
   tags              = { Name = "sbn-app-b"
-			"kubernetes.io/role/internal-elb" = "1" }
+			"kubernetes.io/role/internal-elb" = "1" 
+			"karpenter.sh/discovery"                    = "data-engineer-cluster"
+    "kubernetes.io/cluster/data-engineer-cluster" = "shared"}
+			
 }
 
 resource "aws_subnet" "db_private_a" {

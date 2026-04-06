@@ -77,7 +77,6 @@ resource "aws_security_group" "rds" {
   }
 }
 
-data "aws_region" "current" {}
 
 resource "aws_vpc_endpoint" "s3" {
   vpc_id            = aws_vpc.main.id

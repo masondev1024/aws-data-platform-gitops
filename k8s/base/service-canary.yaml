@@ -1,0 +1,7 @@
+apiVersion: v2
+kind: Service
+metadata:
+  name: data-pipeline-svc-canary
+spec:
+  ports: [{ port: 80, targetPort: 8080 }]
+  selector: { app: data-pipeline-app }

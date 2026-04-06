@@ -1,0 +1,8 @@
+# service-stable.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-pipeline-svc-stable
+spec:
+  ports: [{ port: 80, targetPort: 8080 }]
+  selector: { app: data-pipeline-app }
