@@ -30,5 +30,5 @@ variable "github_repo" {
 variable "github_branch" {
   description = "GitHub branch allowed to assume the OIDC role"
   type        = string
-  default     = "main"
+  default     = "cicd_test"
 }

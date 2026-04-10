@@ -18,7 +18,7 @@ resource "helm_release" "karpenter" {
   namespace        = "karpenter"
   create_namespace = true
   name             = "karpenter"
-  repository       = "https://charts.karpenter.sh"
+  repository = "oci://public.ecr.aws/karpenter"
   chart            = "karpenter"
   version          = "v0.32.1"
 
