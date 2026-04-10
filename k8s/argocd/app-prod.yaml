@@ -6,8 +6,8 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/yooseongjin527/asac_de2_infra_1st
-    targetRevision: cicd
+    repoURL: https://github.com/masondev1024/my-data-platform
+    targetRevision: cicd_test
     path: k8s/overlays/prod
   destination:
     server: https://kubernetes.default.svc

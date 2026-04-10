@@ -1,5 +1,5 @@
 resource "aws_iam_role" "eks_cluster" {
-  name = "EKSClusterRole"
+  name = "EKSClusterRole-v2"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -16,7 +16,7 @@ resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
 }
 
 resource "aws_iam_role" "eks_node" {
-  name = "EKSNodeRole"
+  name = "EKSNodeRole-v2"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -70,4 +70,36 @@ resource "aws_eks_node_group" "main" {
     aws_iam_role_policy_attachment.cni_policy,
     aws_iam_role_policy_attachment.ecr_policy
   ]
+}
+
+# 1. Bastion의 IAM 역할에 DescribeCluster 권한 부여
+resource "aws_iam_role_policy" "bastion_eks_access" {
+  name = "BastionEKSAccess"
+  role = aws_iam_role.bastion.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["eks:DescribeCluster", "eks:ListClusters"]
+      Resource = "*"
+    }]
+  })
+}
+
+# 2. EKS 클러스터 내부에서 Bastion 역할을 관리자로 등록 (Access Entry)
+resource "aws_eks_access_entry" "bastion" {
+  cluster_name      = aws_eks_cluster.main.name
+  principal_arn     = aws_iam_role.bastion.arn
+  type              = "STANDARD"
+}
+
+resource "aws_eks_access_policy_association" "bastion_admin" {
+  cluster_name  = aws_eks_cluster.main.name
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+  principal_arn = aws_iam_role.bastion.arn
+
+  access_scope {
+    type = "cluster"
+  }
 }

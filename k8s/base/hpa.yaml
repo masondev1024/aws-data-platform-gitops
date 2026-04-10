@@ -2,32 +2,12 @@
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: raffle-hpa-v1
+  name: data-pipeline-hpa
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
-    kind: Deployment
-    name: raffle-app-v1
-  minReplicas: 2
-  maxReplicas: 20
-  metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 50
----
-# V2 오토스케일러
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: raffle-hpa-v2
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: raffle-app-v2
+    kind: Rollout
+    name: data-pipeline-app
   minReplicas: 2
   maxReplicas: 20
   metrics:

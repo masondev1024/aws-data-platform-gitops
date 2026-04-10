@@ -10,7 +10,7 @@ spec:
         spec:
           containers:
           - name: draw-worker
-            image: 486053612615.dkr.ecr.eu-west-2.amazonaws.com/my-raffle-app:v1
+            image: 486053612615.dkr.ecr.eu-west-1.amazonaws.com/my-raffle-app:v1
             command: ["python", "draw_winner.py"]
             envFrom:
             - configMapRef:

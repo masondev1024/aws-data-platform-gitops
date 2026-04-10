@@ -2,7 +2,8 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../base
+nameSuffix: -v2
 images:
   - name: data-pipeline-app
     newName: 123456789012.dkr.ecr.eu-west-1.amazonaws.com/data-pipeline-app
-    newTag: latest
+    newTag: v2 # CI/CD 파이프라인에 의해 덮어씌워짐
