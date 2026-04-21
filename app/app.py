@@ -2,9 +2,10 @@ from flask import Flask, render_template, request, jsonify, session, redirect, u
 import pymysql
 from datetime import datetime
 import os 
+from dotenv import load_dotenv
 
 app = Flask(__name__)
-app.secret_key = 'dev-secret-key'
+app.secret_key = os.environ.get('SECRET_KEY', 'default-dev-key')
 
 # 1. ConfigMap에서 가져오기
 DB_WRITER_HOST = os.environ.get('DB_WRITER_HOST')
