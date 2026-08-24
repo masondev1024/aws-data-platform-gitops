@@ -1,0 +1,98 @@
+name: CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - ".github/workflows/cd.yaml"
+
+permissions:
+  id-token: write
+  contents: write
+
+concurrency:
+  group: production-image-publish
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: eu-west-1
+  ECR_REPOSITORY: data-pipeline-app
+
+jobs:
+  publish:
+    name: Publish image and update GitOps manifest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify deployment configuration
+        env:
+          AWS_ROLE_TO_ASSUME: ${{ vars.AWS_ROLE_TO_ASSUME }}
+        run: |
+          test -n "$AWS_ROLE_TO_ASSUME" || {
+            echo "::error::Repository variable AWS_ROLE_TO_ASSUME is not configured."
+            exit 1
+          }
+
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build --pull --tag "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" ./app
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+      - name: Update production manifest
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import os
+
+          manifest = Path("k8s/overlays/prod/kustomization.yaml")
+          lines = manifest.read_text().splitlines()
+          registry = f"{os.environ['ECR_REGISTRY']}/{os.environ['ECR_REPOSITORY']}"
+          changed = {"newName": False, "newTag": False}
+
+          for index, line in enumerate(lines):
+              if line.strip().startswith("newName:"):
+                  lines[index] = f"    newName: {registry}"
+                  changed["newName"] = True
+              elif line.strip().startswith("newTag:"):
+                  lines[index] = f"    newTag: {os.environ['IMAGE_TAG']}"
+                  changed["newTag"] = True
+
+          if not all(changed.values()):
+              raise SystemExit(f"Could not update image fields: {changed}")
+          manifest.write_text("\n".join(lines) + "\n")
+          PY
+
+      - name: Validate updated production manifest
+        run: kubectl kustomize k8s/overlays/prod > /tmp/rendered-production.yaml
+
+      - name: Commit manifest change
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          if git diff --quiet -- k8s/overlays/prod/kustomization.yaml; then
+            echo "The manifest already references $IMAGE_TAG."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- k8s/overlays/prod/kustomization.yaml
+          git commit -m "chore(deploy): update image to $IMAGE_TAG [skip ci]"
+          git push origin HEAD:main

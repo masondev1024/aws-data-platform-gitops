@@ -1,6 +1,6 @@
 resource "aws_security_group" "command_server" {
-  name        = "command-server-sg"
-  vpc_id      = aws_vpc.main.id
+  name   = "command-server-sg"
+  vpc_id = aws_vpc.main.id
   ingress {
     from_port   = 22
     to_port     = 22
@@ -16,8 +16,8 @@ resource "aws_security_group" "command_server" {
 }
 
 resource "aws_security_group" "alb" {
-  name        = "alb-sg"
-  vpc_id      = aws_vpc.main.id
+  name   = "alb-sg"
+  vpc_id = aws_vpc.main.id
   ingress {
     from_port   = 80
     to_port     = 80
@@ -33,8 +33,8 @@ resource "aws_security_group" "alb" {
 }
 
 resource "aws_security_group" "app" {
-  name        = "app-node-sg"
-  vpc_id      = aws_vpc.main.id
+  name   = "app-node-sg"
+  vpc_id = aws_vpc.main.id
   ingress {
     from_port       = 80
     to_port         = 80
@@ -56,8 +56,8 @@ resource "aws_security_group" "app" {
 }
 
 resource "aws_security_group" "vpc_endpoints" {
-  name        = "vpc-endpoints-sg"
-  vpc_id      = aws_vpc.main.id
+  name   = "vpc-endpoints-sg"
+  vpc_id = aws_vpc.main.id
   ingress {
     from_port       = 443
     to_port         = 443
@@ -67,8 +67,8 @@ resource "aws_security_group" "vpc_endpoints" {
 }
 
 resource "aws_security_group" "rds" {
-  name        = "rds-isolated-sg"
-  vpc_id      = aws_vpc.main.id
+  name   = "rds-isolated-sg"
+  vpc_id = aws_vpc.main.id
   ingress {
     from_port       = 3306
     to_port         = 3306

@@ -5,7 +5,7 @@ metadata:
   name: default
 spec:
   amiFamily: AL2023 # 최신 Amazon Linux 2023 사용
-  role: EKSNodeRole # 테라폼에서 생성한 노드 역할 이름과 일치해야 함
+  role: EKSNodeRole-v2 # 테라폼에서 생성한 노드 역할 이름과 일치해야 함
   subnetSelectorTerms:
     - tags:
         karpenter.sh/discovery: "data-engineer-cluster"

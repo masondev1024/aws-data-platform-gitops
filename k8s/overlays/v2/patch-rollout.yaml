@@ -1,0 +1,12 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: data-pipeline-rollout
+spec:
+  strategy:
+    canary:
+      canaryService: data-pipeline-svc-canary-v2
+      stableService: data-pipeline-svc-stable-v2
+      trafficRouting:
+        alb:
+          ingress: data-pipeline-ingress-v2

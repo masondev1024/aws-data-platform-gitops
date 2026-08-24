@@ -1,5 +1,5 @@
 # 1. 파이썬 실행 환경 선택 (가벼운 버전인 alpine이나 slim 추천)
-FROM python:3.9-slim
+FROM python:3.12-slim
 
 # 2. 컨테이너 내부 작업 디렉토리 설정
 WORKDIR /app

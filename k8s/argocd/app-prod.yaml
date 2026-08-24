@@ -6,8 +6,8 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/masondev1024/my-data-platform
-    targetRevision: cicd_test
+    repoURL: https://github.com/masondev1024/develope-project
+    targetRevision: main
     path: k8s/overlays/prod
   destination:
     server: https://kubernetes.default.svc

@@ -27,10 +27,31 @@ spec:
     spec:
       containers:
         - name: app-container
-          image: 123456789012.dkr.ecr.eu-west-1.amazonaws.com/data-pipeline-app:latest
+          image: data-pipeline-app:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: FLASK_ENV
+              value: production
           ports:
             - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
           resources:
             requests:
               cpu: "200m"
               memory: "256Mi"
+          envFrom:
+            - configMapRef:
+                name: raffle-config
+            - secretRef:
+                name: raffle-secret

@@ -4,7 +4,10 @@ from datetime import datetime
 import os 
 
 app = Flask(__name__)
-app.secret_key = 'dev-secret-key'
+configured_secret_key = os.environ.get('SECRET_KEY')
+if os.environ.get('FLASK_ENV', '').lower() == 'production' and not configured_secret_key:
+    raise RuntimeError('SECRET_KEY must be configured in production')
+app.secret_key = configured_secret_key or 'dev-only-secret-key'
 
 # 1. ConfigMap에서 가져오기
 DB_WRITER_HOST = os.environ.get('DB_WRITER_HOST')
@@ -21,8 +24,34 @@ def get_db_connection(is_write=False):
         user=DB_USER,
         password=DB_PASSWORD,
         database=DB_NAME,
+        connect_timeout=5,
+        read_timeout=10,
+        write_timeout=10,
         cursorclass=pymysql.cursors.DictCursor # 결과를 딕셔너리 형태로 받아옴
     )
+
+
+@app.route('/healthz')
+def healthz():
+    """Process health endpoint used by Kubernetes probes."""
+    return jsonify({"status": "ok"})
+
+
+@app.route('/readyz')
+def readyz():
+    """Dependency readiness endpoint used before sending user traffic."""
+    conn = None
+    try:
+        conn = get_db_connection(is_write=False)
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT 1")
+    except (pymysql.MySQLError, OSError) as exc:
+        app.logger.warning("Database readiness check failed: %s", exc)
+        return jsonify({"status": "not_ready"}), 503
+    finally:
+        if conn is not None:
+            conn.close()
+    return jsonify({"status": "ready"})
 
 # ==========================================
 # 2. 화면 라우팅 (SELECT ➡️ 리플리카 사용)
@@ -221,4 +250,5 @@ def initialize_database():
     return "DB 초기화 및 샘플 데이터 삽입 성공! 이제 메인 페이지(/)로 접속하세요."
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080, debug=True)
+    debug_enabled = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
+    app.run(host='0.0.0.0', port=8080, debug=debug_enabled)
