@@ -6,7 +6,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/masondev1024/develope-project
+    repoURL: https://github.com/masondev1024/aws-data-platform-gitops
     targetRevision: main
     path: k8s/overlays/prod
   destination:

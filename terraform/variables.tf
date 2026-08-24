@@ -24,7 +24,7 @@ variable "github_owner" {
 variable "github_repo" {
   description = "GitHub repository name"
   type        = string
-  default     = "develope-project"
+  default     = "aws-data-platform-gitops"
 }
 
 variable "github_branch" {

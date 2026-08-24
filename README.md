@@ -1,4 +1,6 @@
-# ASAC 데이터 엔지니어 2기 인프라 프로젝트 1조
+# AWS Data Platform GitOps
+
+기존 래플 트래픽 응모 시스템에서 구현하지 못했던 운영 인프라와 배포 자동화를 확장한 프로젝트입니다. AWS와 Terraform을 기반으로 EKS, ECR, GitHub Actions OIDC, Argo CD GitOps, Argo Rollouts canary 배포 흐름을 구성했습니다.
 
 ## CI/CD
 
@@ -12,20 +14,26 @@
 
 ## GitHub 설정
 
-Terraform 적용 후 출력되는 `github_actions_role_arn` 값을 저장소 변수로 등록합니다.
+Terraform 적용 후 출력되는 `github_actions_role_arn` 값을 CD용 저장소 변수로 등록합니다.
 
 ```text
 Settings → Secrets and variables → Actions → Variables
 AWS_ROLE_TO_ASSUME=<terraform output github_actions_role_arn>
 ```
 
-Terraform plan을 GitHub Actions에서 실행하려면 다음 저장소 secret도 등록해야 합니다.
+Terraform plan은 CD role과 분리된 별도 role을 사용해야 합니다. 전체 인프라 plan 권한을 부여한 role을 만들었을 때만 다음 변수를 추가합니다.
+
+```text
+AWS_TERRAFORM_ROLE_TO_ASSUME=<separate terraform plan role ARN>
+```
+
+Terraform plan을 실행하려면 다음 저장소 secret도 등록해야 합니다.
 
 ```text
 TF_VAR_DB_PASSWORD=<16자 이상인 새 RDS 비밀번호>
 ```
 
-`AWS_ROLE_TO_ASSUME`이 없으면 Terraform cloud plan은 의도적으로 건너뛰고 정적 검증만 수행합니다. CD는 AWS role이 없으면 명확한 오류로 중단됩니다.
+`AWS_TERRAFORM_ROLE_TO_ASSUME`이 없거나 pull request인 경우 Terraform cloud plan은 의도적으로 건너뛰고 정적 검증만 수행합니다. CD는 `AWS_ROLE_TO_ASSUME`이 없으면 명확한 오류로 중단됩니다.
 
 ## 로컬 검증
 
