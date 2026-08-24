@@ -1,0 +1,33 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: data-pipeline-stable
+  labels:
+    monitoring: data-pipeline
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: data-pipeline
+      app.kubernetes.io/component: stable
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 5s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: data-pipeline-canary
+  labels:
+    monitoring: data-pipeline
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: data-pipeline
+      app.kubernetes.io/component: canary
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 5s

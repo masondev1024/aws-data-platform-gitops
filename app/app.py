@@ -1,7 +1,10 @@
-from flask import Flask, render_template, request, jsonify, session, redirect, url_for
-import pymysql
 from datetime import datetime
-import os 
+import os
+from time import perf_counter
+
+import pymysql
+from flask import Flask, Response, g, jsonify, redirect, render_template, request, session, url_for
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 
 app = Flask(__name__)
 configured_secret_key = os.environ.get('SECRET_KEY')
@@ -15,6 +18,50 @@ DB_READER_HOST = os.environ.get('DB_READER_HOST')
 DB_NAME = os.environ.get('DB_NAME', 'raffle_db')
 DB_USER = os.environ.get('DB_USER', 'admin')
 DB_PASSWORD = os.environ.get('DB_PASSWORD')
+
+HTTP_REQUESTS = Counter(
+    'raffle_http_requests',
+    'Total HTTP requests handled by the raffle application.',
+    ('method', 'route', 'status'),
+)
+HTTP_REQUEST_DURATION = Histogram(
+    'raffle_http_request_duration_seconds',
+    'HTTP request duration in seconds.',
+    ('method', 'route'),
+)
+RAFFLE_APPLY_REQUESTS = Counter(
+    'raffle_apply_requests',
+    'Raffle application outcomes.',
+    ('result',),
+)
+DB_READINESS = Gauge(
+    'raffle_db_readiness',
+    'Whether the configured read database passed the latest readiness check.',
+)
+
+
+def _metric_route():
+    """Return a bounded route label instead of a user-controlled URL path."""
+    if request.url_rule is not None:
+        return request.url_rule.rule
+    return 'unmatched'
+
+
+@app.before_request
+def start_request_timer():
+    g.request_started_at = perf_counter()
+
+
+@app.after_request
+def record_request_metrics(response):
+    # Scraping /metrics must not create an unbounded self-referential counter.
+    if request.endpoint != 'metrics':
+        route = _metric_route()
+        HTTP_REQUESTS.labels(request.method, route, str(response.status_code)).inc()
+        HTTP_REQUEST_DURATION.labels(request.method, route).observe(
+            perf_counter() - g.get('request_started_at', perf_counter())
+        )
+    return response
 
 def get_db_connection(is_write=False):
     """트래픽 분산의 핵심: 쓰기 요청은 Master로, 읽기 요청은 Replica로 연결"""
@@ -41,6 +88,7 @@ def healthz():
 def readyz():
     """Dependency readiness endpoint used before sending user traffic."""
     conn = None
+    DB_READINESS.set(0)
     try:
         conn = get_db_connection(is_write=False)
         with conn.cursor() as cursor:
@@ -51,7 +99,14 @@ def readyz():
     finally:
         if conn is not None:
             conn.close()
+    DB_READINESS.set(1)
     return jsonify({"status": "ready"})
+
+
+@app.route('/metrics')
+def metrics():
+    """Expose Prometheus metrics for an internal scraper."""
+    return Response(generate_latest(), content_type=CONTENT_TYPE_LATEST)
 
 # ==========================================
 # 2. 화면 라우팅 (SELECT ➡️ 리플리카 사용)
@@ -132,8 +187,9 @@ def api_signup():
     password = data.get('password')
     
     # [마스터 DB] 회원가입 저장
-    conn = get_db_connection(is_write=True)
+    conn = None
     try:
+        conn = get_db_connection(is_write=True)
         with conn.cursor() as cursor:
             cursor.execute("INSERT INTO users (username, password) VALUES (%s, %s)", (username, password))
         conn.commit()
@@ -141,7 +197,8 @@ def api_signup():
     except pymysql.err.IntegrityError:
         return jsonify({"status": "error", "message": "이미 존재하는 아이디입니다."}), 400
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 @app.route('/api/login', methods=['POST'])
 def api_login():
@@ -169,13 +226,15 @@ def api_logout():
 @app.route('/api/apply', methods=['POST'])
 def api_apply():
     if 'user_id' not in session:
+        RAFFLE_APPLY_REQUESTS.labels('unauthenticated').inc()
         return jsonify({"status": "error", "message": "login_required"}), 401
     
     item_id = request.json.get('item_id')
     current_username = session['user_id']
-    
-    conn = get_db_connection(is_write=True)
+
+    conn = None
     try:
+        conn = get_db_connection(is_write=True)
         with conn.cursor() as cursor:
             # username으로 user_id(PK) 찾기
             cursor.execute("SELECT id FROM users WHERE username=%s", (current_username,))
@@ -184,11 +243,18 @@ def api_apply():
             # [마스터 DB] 응모 기록 저장
             cursor.execute("INSERT INTO raffle_entries (user_id, item_id) VALUES (%s, %s)", (user_pk, item_id))
         conn.commit()
+        RAFFLE_APPLY_REQUESTS.labels('success').inc()
         return jsonify({"status": "success", "message": "성공적으로 응모되었습니다! 마이페이지에서 확인하세요."})
     except pymysql.err.IntegrityError:
+        RAFFLE_APPLY_REQUESTS.labels('duplicate').inc()
         return jsonify({"status": "error", "message": "이미 응모하신 상품입니다!"}), 400
+    except pymysql.MySQLError:
+        RAFFLE_APPLY_REQUESTS.labels('database_error').inc()
+        app.logger.exception("Raffle application failed because of a database error")
+        return jsonify({"status": "error", "message": "잠시 후 다시 시도해주세요."}), 503
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 # ==========================================
 # 4. [최초 1회 실행용] DB 테이블 및 초기 데이터 셋업

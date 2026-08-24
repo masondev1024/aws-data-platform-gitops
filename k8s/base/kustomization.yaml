@@ -7,3 +7,7 @@ resources:
   - hpa.yaml
   - ingress.yaml
   - cronjob.yaml
+  - service-monitors.yaml
+  - prometheus-rules.yaml
+  - analysis-template.yaml
+  - grafana-dashboard.yaml

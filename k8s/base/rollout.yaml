@@ -15,8 +15,20 @@ spec:
       steps:
         - setWeight: 10
         - pause: { duration: 2m }
+        - analysis:
+            templates:
+              - templateName: data-pipeline-canary
+            args:
+              - name: service-name
+                value: data-pipeline-svc-canary
         - setWeight: 50
         - pause: { duration: 5m }
+        - analysis:
+            templates:
+              - templateName: data-pipeline-canary
+            args:
+              - name: service-name
+                value: data-pipeline-svc-canary
   selector:
     matchLabels:
       app: data-pipeline-app

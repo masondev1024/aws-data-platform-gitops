@@ -8,7 +8,25 @@ spec:
     kind: Rollout
     name: data-pipeline-rollout
   minReplicas: 2
-  maxReplicas: 20
+  # 단일 t3.medium 검증 노드의 Pod 상한(17개)을 넘지 않도록 상한을 둔다.
+  # 운영 프로필에서 이 값을 올릴 때는 노드 자동 확장 예산과 Pod 수용량
+  # 테스트를 함께 통과시켜야 한다.
+  maxReplicas: 4
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      selectPolicy: Max
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 60
+      selectPolicy: Max
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
   metrics:
   - type: Resource
     resource:

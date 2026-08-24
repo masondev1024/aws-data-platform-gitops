@@ -23,16 +23,26 @@ terraform {
 provider "aws" {
   region = var.aws_region
 }
-# EKS 클러스터 인증 정보를 가져오기 위한 데이터 소스 선언
-data "aws_eks_cluster_auth" "cluster" {
-  name = aws_eks_cluster.main.name
-}
-
 # helm provider 내부에는 backend가 들어갈 수 없습니다.
 provider "helm" {
   kubernetes {
     host                   = aws_eks_cluster.main.endpoint
     cluster_ca_certificate = base64decode(aws_eks_cluster.main.certificate_authority[0].data)
-    token                  = data.aws_eks_cluster_auth.cluster.token
+
+    # SSO 토큰은 짧은 수명을 가지므로 plan 시점에 미리 읽은
+    # aws_eks_cluster_auth 값을 재사용하지 않고, Helm 요청 시 AWS CLI가
+    # 현재 세션의 토큰을 발급하도록 한다.
+    exec {
+      api_version = "client.authentication.k8s.io/v1beta1"
+      command     = "aws"
+      args = [
+        "eks",
+        "get-token",
+        "--cluster-name",
+        aws_eks_cluster.main.name,
+        "--region",
+        var.aws_region,
+      ]
+    }
   }
 }

@@ -70,10 +70,15 @@ resource "aws_security_group" "rds" {
   name   = "rds-isolated-sg"
   vpc_id = aws_vpc.main.id
   ingress {
-    from_port       = 3306
-    to_port         = 3306
-    protocol        = "tcp"
-    security_groups = [aws_security_group.app.id]
+    from_port = 3306
+    to_port   = 3306
+    protocol  = "tcp"
+    # EKS managed nodes use the cluster security group, not the legacy
+    # app-node-sg. Keep the RDS private and allow only the in-VPC workload SGs.
+    security_groups = [
+      aws_security_group.app.id,
+      aws_eks_cluster.main.vpc_config[0].cluster_security_group_id,
+    ]
   }
 }
 
