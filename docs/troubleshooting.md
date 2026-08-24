@@ -135,6 +135,49 @@ GitHub Actions가 assume할 OIDC role ARN이 저장소 변수에 등록되지 �
 
 Terraform 전체 plan은 별도 권한이 필요하다. 현재 CD role은 의도적으로 ECR push 중심의 최소 권한이므로, 전체 인프라 plan/apply에는 별도의 Terraform role과 workflow variable을 사용해야 한다.
 
+## 14. Terraform이 AWS SSO 세션을 못 읽는 경우
+
+### 증상
+
+저비용 validation 프로필의 `terraform apply`가 리소스 생성 전에 다음 오류로 종료될 수 있다.
+
+```text
+InvalidClientTokenId: The security token included in the request is invalid
+```
+
+### 원인
+
+AWS CLI에서 `AWS_PROFILE=develope-test aws sts get-caller-identity`를 실행한 것만으로는 별도 프로세스인 Terraform에 profile이 전달되지 않는다. Terraform 명령에도 `AWS_PROFILE`/`AWS_REGION`을 export하거나 명령 앞에 명시해야 한다. 이번 재현에서는 AWS CLI의 SSO 세션은 유효했지만 Terraform에는 profile 환경 변수가 없어 기본 자격증명이 선택됐다.
+
+### 복구와 예방
+
+```bash
+export AWS_PROFILE=develope-test
+export AWS_REGION=eu-west-1
+aws sts get-caller-identity
+terraform -chdir=terraform/validation plan -input=false
+```
+
+validation runbook에도 같은 export를 포함했다. 적용 전에는 반드시 계정 ID와 ARN을 확인하고, Terraform plan이 읽기 단계까지 성공한 뒤에만 apply한다. 자격증명을 파일에 복사하거나 장기 access key를 만들지 않는다.
+
+## 15. Firehose Parquet 변환과 5MB 버퍼 조합
+
+### 증상
+
+Parquet 변환을 켠 validation profile에서 Firehose 생성이 다음 오류로 거부됐다.
+
+```text
+BufferingHints.SizeInMBs must be at least 64 when data format conversion is enabled.
+```
+
+### 원인과 결정
+
+Firehose record format conversion은 64MB 미만의 `SizeInMBs`를 허용하지 않는다. 처음에는 freshness를 빠르게 하려고 `5MB/60초`를 선택했지만, 이 조합은 API 계약과 충돌했다. Parquet 데이터 계약 검증을 포기하지 않고 `64MB/60초`로 수정했다. 낮은 validation 처리량에서는 size보다 60초 interval이 flush를 결정하므로 128MB/300초 대비 feedback 지연은 줄어든다.
+
+### 예방
+
+`terraform/validation` Firehose resource에 plan 단계 `precondition`을 추가해 Parquet 변환과 64MB 미만 버퍼 조합을 AWS API 호출 전에 차단했다. raw JSON만 의도적으로 검증하는 별도 경우에만 Parquet 변환을 끄고 5MB를 선택한다. 공식 근거는 [Firehose record format conversion 문서](https://docs.aws.amazon.com/firehose/latest/dev/enable-record-format-conversion.html)다.
+
 ## 8. Repository rename 이후 OIDC assume-role 실패
 
 ### 증상
@@ -164,3 +207,74 @@ Terraform에도 `github_owner_id`와 `github_repo_id`를 명시해 저장소 이
 ### 운영 교훈
 
 GitHub 저장소명을 변경할 때는 URL, Argo CD `repoURL`, Terraform 변수뿐 아니라 OIDC trust policy의 subject claim도 함께 확인해야 한다. 장기적으로는 owner/repository ID 기반 claim을 사용하고, branch/environment 범위는 `StringEquals`로 최소화한다.
+## 16. Ingress 필드 위치 오류
+
+### 증상
+
+실제 EKS에 production manifest를 적용할 때 다음 오류로 Ingress 생성이 거절됐다.
+
+```text
+strict decoding error: unknown field "metadata.ingressClassName"
+```
+
+### 원인과 조치
+
+`ingressClassName`이 `metadata` 아래에 있었고 Kubernetes Ingress schema가 요구하는 `spec` 아래가 아니었다. 필드를 `spec.ingressClassName`으로 이동한 뒤 Kustomize render와 실제 ALB reconciliation을 다시 확인했다. 이후 ALB hostname이 발급되고 `/healthz`와 `/readyz`가 200을 반환했다.
+
+## 17. RDS 보안 그룹과 EKS 노드 보안 그룹 불일치
+
+### 증상
+
+Rollout Pod가 처음에는 RDS 연결 timeout으로 Ready가 되지 않았다. RDS가 private endpoint라서 애플리케이션 문제처럼 보였지만, 애플리케이션 로그를 확인한 뒤 네트워크 문제로 범위를 좁혔다.
+
+### 원인과 조치
+
+RDS SG는 예전 `app-node-sg`만 허용하고 있었고, 현재 EKS managed node ENI는 EKS cluster security group을 사용했다. Terraform RDS ingress에 애플리케이션 SG와 EKS cluster SG를 명시적으로 추가했다. Terraform plan은 `0 add, 1 change, 0 destroy`였고, 적용 후 오류가 `Unknown database 'raffle_db'`로 바뀌어 네트워크 경로가 복구됐음을 확인했다. 이후 `/init-db`를 1회 실행해 schema를 만들고 Rollout이 2/2 Ready가 됐다.
+
+## 18. HPA가 단일 검증 노드의 Pod 수용량을 초과한 문제
+
+### 증상
+
+k6 readiness 50 req/s 단계 후 HPA가 CPU 지표를 읽고 desired replicas를 11까지 계산했다. 단일 t3.medium 노드의 allocatable Pod 상한은 17개였고, 기존 system/observability Pod 때문에 애플리케이션 Pod 4개만 배치되고 7개가 `Pending`이었다. Pending 원인은 CPU가 아니라 `Too many pods`였다.
+
+### 조치
+
+검증 프로필은 노드 자동 확장 실험이 목적이 아니므로 HPA `maxReplicas`를 20에서 4로 낮추고, scale-up/down을 각각 1 Pod/60초로 제한했다. 적용 후 HPA는 4개 이하로 정리됐고 약 60초 안에 2 replicas/2 Ready로 안정화됐다. 운영 환경에서 상한을 높일 때는 Karpenter/node autoscaling 예산과 Pod capacity 테스트를 함께 통과시켜야 한다.
+
+## 19. Argo Rollouts AnalysisRun 실패와 자동 rollback
+
+### 재현
+
+검증 목적으로 canary 5xx 분석 조건을 일시적으로 항상 거짓이 되도록 바꾸고 Pod template annotation만 변경해 revision 2를 만들었다. 10% traffic weight와 2분 pause 뒤 AnalysisRun이 실행됐고, canary 메트릭이 아직 없어 `slice index out of range` 오류가 발생했다.
+
+### 결과와 교훈
+
+AnalysisRun이 `Error`가 되자 Rollout은 `Degraded`로 전환되고 canary ReplicaSet을 0으로 줄여 stable revision으로 자동 복귀했다. 원래 AnalysisTemplate을 복원하고 annotation을 제거하자 `Healthy`, step 6, stable 100% 상태가 됐다. 메트릭이 없는 canary를 성공으로 처리하지 않고 fail-closed한 것은 안전하지만, 실제 배포 runbook에는 synthetic canary traffic과 no-data guard를 추가해야 한다.
+
+## 20. Pod 장애와 DB 장애 복구 훈련
+
+### Pod 장애
+
+Ready Pod 한 개를 삭제했다. ALB `/healthz`는 계속 200이었고, 새 비종료 Pod가 Ready가 되어 2개 Ready로 복구되는 시점은 약 2초로 관측됐다. Rollout은 `Healthy`로 유지됐다.
+
+### DB 장애
+
+한 Pod가 새로 시작할 때만 DB writer/reader endpoint를 `127.0.0.1`로 주입해 DB 연결 실패를 주입했다. 해당 Pod는 Ready에서 제외됐지만 다른 Pod는 ALB 200을 계속 반환했다. 원래 endpoint를 복원하고 실패 Pod를 교체한 뒤 약 9초 내 2개 Ready/Healthy로 회복됐다. readiness에는 DB 의존성을 두되 liveness에는 두지 않은 설계가 실제 장애 격리에 기여했다.
+
+## 21. 부하 테스트 계정명 충돌
+
+### 증상
+
+중복 응모 검증을 재실행했는데 고유 nonce를 붙였다고 생각한 계정이 계속 회원가입 400을 반환했다.
+
+### 원인과 조치
+
+zsh에서 `$USERNAME`은 로그인 사용자명으로 이미 정의된 특수 환경값이라 테스트 스크립트의 대입값이 의도대로 사용되지 않았다. 실제 요청에는 기존 사용자명이 들어갔고, 애플리케이션의 정상적인 unique constraint 400이었다. 테스트 변수명을 `TEST_USER`/`TEST_PASS`로 바꾸고 UUID를 사용한 뒤 회원가입 200, 로그인 200, 최초 응모 200, 중복 응모 400을 재현했다. 테스트 자격증명은 파일이나 문서에 저장하지 않았다.
+
+## 22. stable/canary ServiceMonitor 중복 계측
+
+Rollout 완료 후 stable과 canary Service가 같은 stable Pod hash를 가리키면서 하나의 Pod가 두 ServiceMonitor에 의해 스크랩될 수 있었다. 원시 카운터를 단순 `sum`하면 응모 성공 수가 실제보다 2배로 보였다. Grafana와 PrometheusRule을 `max by (pod, ...)` 후 집계하도록 수정해 duplicate scrape를 제거했고, 현재 정확성 집계는 Pod 기준 dedup을 사용한다. AnalysisTemplate은 `service`를 명시적으로 필터링해 canary 범위를 분리한다.
+
+## 23. Stateful workload teardown 뒤 고아 EBS 확인
+
+단기 EKS destroy 뒤에도 Kubernetes PVC가 만든 EBS volume은 데이터 보존 정책에 따라 남을 수 있다. 이번 감사에서는 테스트 cluster tag와 PVC tag가 일치하는 `available` 1GiB volume을 발견했고 attachment가 없는 것을 확인한 뒤 명시적으로 삭제했다. 이후 EC2 `describe-volumes`에서 `InvalidVolume.NotFound`와 전용 tag 재조회 빈 결과를 확인했다. Resource Groups Tagging API는 삭제 ARN을 잠시 반환했으므로 태그 인덱스보다 실제 EC2 control plane을 teardown의 최종 판정으로 삼는다. 다음 teardown에도 `describe-volumes`에서 cluster/PVC tag를 기준으로 잔여 volume을 확인한다.

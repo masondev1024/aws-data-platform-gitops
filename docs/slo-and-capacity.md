@@ -1,6 +1,6 @@
 # SLO와 용량 측정 기준
 
-> 상태: 초안. 아래 목표는 운영 측정 전의 가설이며, 실제 AWS 실행 결과가 아니다.
+> 상태: 2026-08-24 실제 AWS short-lived validation을 완료했다. 아래 수치는 단일 t3.medium/RDS primary-only 검증 프로필의 증거이며 production capacity로 확대 해석하지 않는다.
 
 ## 서비스 범위
 
@@ -47,4 +47,33 @@ Alertmanager는 webhook URL을 Terraform 변수로 명시하지 않으면 인프
 - 테스트 계정과 상품은 전용 namespace/prefix로 격리하고 실행 후 삭제한다.
 - 운영 데이터와 실제 사용자 자격증명을 부하 테스트에 사용하지 않는다.
 - EKS/RDS/NAT/ALB를 다시 생성할 때는 최소 비용 profile과 종료 체크리스트를 먼저 적용한다.
-- 현재는 실제 처리량, p95/p99, HPA 동작, replica lag, RTO/RPO를 검증했다고 주장할 수 없다.
+- 실제 readiness 처리량·p95/p99·HPA 동작·Pod/DB 장애 복구는 검증했다. RDS read replica lag, Multi-AZ failover, node-level eviction은 이번 primary-only profile에서 검증하지 않았다.
+
+## 비용 프로필별 측정 경계
+
+| 프로필 | 검증 대상 | 생성하지 않는 항목 | 권장 순서 |
+|---|---|---|---|
+| 스트리밍 단기 검증 | Kinesis lag, Firehose freshness, throttle, S3 적재 | EKS, EC2, NAT, ALB, RDS, HPA | 100Hz → 1,000Hz → verifier → destroy |
+| 애플리케이션 부하 검증 | HTTP SLO, HPA, DB 연결, replica lag, Canary | 별도 선택 | 비용 승인 → 최소 EKS/RDS → k6 → 증거 저장 → destroy |
+
+스트리밍 프로필의 64MB/60초 Firehose buffer는 Parquet 변환을 유지할 수 있는 최소 크기이며, 기존 128MB/300초보다 데이터 신선도 피드백을 최대 약 4분 빠르게 한다. 낮은 처리량에서는 크기보다 60초 interval이 flush를 결정한다. 이 설정은 장시간 운영 설정으로 승격하지 않으며, 실제 처리량과 비용은 프로필별로 별도 기록하고 스트리밍 검증 결과를 애플리케이션 API 용량으로 확대 해석하지 않는다.
+
+2026-08-24 streaming evidence: 100Hz 약 72초, 7,200 records, 실패 0, Parquet 2개, Kinesis iterator age 0ms, write throttle 0. Firehose freshness/success metric query는 당시 `NO_DATA`였고, 이는 CloudWatch 관측 지연 가능성이 있어 해당 metric을 PASS로 판정하지 않았다.
+
+## 2026-08-24 실제 래플 AWS 검증 증거
+
+| 항목 | 관측값 |
+|---|---:|
+| 리전/구성 | `eu-west-1`, EKS 1개 t3.medium, RDS `db.t3.micro` primary-only, ALB |
+| 이미지 | `live-validation-20260824`, digest `sha256:fdfac508194695697019b545764478daefadeb5ade9a75129b5b537010d3484e` |
+| readiness 5 req/s, 30초 | 151/151, error 0%, p95 343.4ms |
+| readiness 20 req/s, 30초 | 601/601, error 0%, p50 320.1ms, p95 354.5ms, p99 406.5ms |
+| readiness 50 req/s, 30초 | HTTP error 0%, dropped arrival 20건, 지속 용량으로 불인정 |
+| apply one-shot 30 VU | signup/login/apply 90/90 성공; `/api/apply` p95/p99 510.9/534.1ms |
+| HPA | CPU 2%/50%, 2 desired/current, max 4 |
+| 정확성 | unauthenticated 401, first apply 200, duplicate apply 400 |
+| Pod 장애 | ALB 200 유지, replacement Ready 약 2초 |
+| DB 장애 | faulty Pod readiness 격리, endpoint 복구 후 2 Ready 약 9초 |
+| canary rollback | AnalysisRun Error → Degraded → stable 복귀 → Healthy |
+
+50 req/s에서 HTTP error만 보면 통과처럼 보이므로 k6 `dropped_iterations`를 함께 봤다. 이 profile에서 기록할 수 있는 capacity 하한은 readiness 기준 20 req/s이며, 응모 API의 one-shot 30 VU 결과는 sustained RPS가 아니라 쓰기 경로/정확성 검증이다.

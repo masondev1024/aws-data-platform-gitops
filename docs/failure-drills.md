@@ -1,6 +1,6 @@
 # Failure drills와 운영 런북
 
-> 상태: 실행 전 계획. 아래 표의 결과는 클러스터를 다시 생성한 뒤 실제 실행하고 채워야 한다.
+> 상태: EKS/RDS 장애 주입은 미실행. 비용을 발생시키지 않는 streaming 검증과 로컬 edge failover lab은 별도 실행했다.
 
 ## 공통 실행 규칙
 
@@ -51,3 +51,58 @@ HAVING COUNT(*) > 1;
 | 미실행 | 5분 이내 | - | 응모 확정 데이터 0건 손실 | - | 미실행 | 클러스터 재생성 후 실행 |
 
 RTO/RPO는 설계 문구가 아니라 장애 주입 결과로만 확정한다. 특히 RDS failover와 read replica lag를 실행하지 않은 상태에서는 데이터 손실·복구 시간을 주장하지 않는다.
+
+## 비용 가드레일과 검증 순서
+
+스트리밍 SLO만 확인하는 날에는 EKS 기반 장애 주입을 시작하지 않는다. 먼저 `terraform/validation` 프로필에서 100Hz Smoke와 1,000Hz 단계 부하를 실행하고 iterator age, Firehose freshness, throttle, S3 Parquet 생성 여부를 확인한다. 이 프로필은 14개 리소스만 생성하며 EKS·NAT·EC2·ALB를 만들지 않는다.
+
+2026-08-24 실제 단기 실행은 100Hz 약 72초, 7,200 records, generator 실패 0건으로 종료했고 S3 Parquet 2개를 확인했다. Kinesis iterator age는 0ms, write throttle은 0이었다. Firehose CloudWatch 지표는 `NO_DATA`였으므로 freshness SLO PASS는 보류했다. destroy는 14개 리소스 기준 41.6초였고, 이후 Kinesis/Firehose/S3/state 잔여가 없었다.
+
+EKS/RDS 장애 drill이 필요한 경우에만 별도 비용 승인을 받고 전체 애플리케이션 프로필을 만든다. 테스트 종료 순서는 `generator/k6 종료 → CloudWatch metric 정지 확인 → workload/Ingress/ALB 확인 → Terraform destroy → EIP/NAT/ECR/S3/Secrets/로그 잔여 확인`으로 고정한다. Billing alarm은 알림 장치일 뿐 자동 중지 장치가 아니므로 destroy 확인이 실제 비용 통제 수단이다.
+## 2026-08-24 실제 AWS 검증 결과
+
+### Pod 장애
+
+- 대상: `data-pipeline-rollout` stable Pod 1개
+- 조치: 정확한 Pod 이름을 확인한 뒤 삭제
+- 결과: ALB `/healthz`는 계속 200, replacement Pod Ready 관측 약 2초
+- 최종 상태: Rollout `Healthy`, 2 replicas/2 Ready
+
+### DB 장애
+
+- 주입: 새 Pod에만 DB writer/reader endpoint를 loopback으로 바꾸는 ConfigMap을 적용
+- 기대: DB readiness 실패 Pod가 Service endpoint에서 제외되고 기존 Pod가 트래픽 유지
+- 결과: fault 구간에도 ALB 200, Ready 1개로 격리
+- 복구: 원래 endpoint 복원과 failed Pod 교체 후 약 9초 내 2 replicas/2 Ready
+
+### 잘못된 배포와 자동 rollback
+
+- 주입: canary AnalysisTemplate 조건을 검증 중에만 실패하도록 변경하고 template annotation으로 새 revision 생성
+- 결과: 10% canary → 2분 pause → AnalysisRun Error → Rollout `Degraded` → canary ReplicaSet 0 → stable revision 복귀
+- 복구: AnalysisTemplate 원복, annotation 제거
+- 최종 상태: Rollout `Healthy`, current step 6, stable 100%
+
+AnalysisRun에서 canary metric vector가 준비되지 않아 `slice index out of range`가 발생했다. 이를 실패로 분류한 것은 안전했지만, 다음에는 synthetic canary traffic과 no-data 상태를 별도 `Inconclusive`로 표현하는 개선을 진행한다.
+
+## 부하 검증과 정확성
+
+| 시나리오 | 결과 |
+|---|---|
+| readiness 5 req/s, 30초 | 151/151, p95 343.4ms |
+| readiness 20 req/s, 30초 | 601/601, p50 320.1ms, p95 354.5ms, p99 406.5ms |
+| readiness 50 req/s, 30초 | HTTP error 0%, 그러나 20 arrival iteration drop — capacity 실패 경계 |
+| apply one-shot 30 VU | signup/login/apply 90/90 성공, `/api/apply` p95/p99 510.9/534.1ms |
+| 정확성 수동 검증 | 비로그인 401, 최초 응모 200, 중복 응모 400 |
+
+50 req/s는 HTTP 오류율만 보면 통과처럼 보이므로 arrival iteration drop까지 함께 봐야 한다. 이 훈련에서 처리량을 과장하지 않고 20 req/s를 현재 readiness 지속 용량 하한으로 기록했다.
+
+## RTO/RPO 표 보정 — 2026-08-24 실행분
+
+앞의 초기 템플릿에서 `미실행`으로 남아 있던 항목은 아래 실제 short-lived EKS 실행 결과로 보정한다. RDS Multi-AZ failover와 read replica lag 자체는 구성하지 않았으므로 해당 수치는 여전히 미검증이다.
+
+| Drill | 실제 RTO | 실제 RPO | 판정 |
+|---|---:|---:|---|
+| Pod 삭제 | 약 2초 | 해당 없음 | 2 Ready 복구, Rollout Healthy |
+| DB 연결 장애 주입 | 약 9초 | 데이터 손실 없음 확인 범위 | 장애 Pod 격리, 기존 Pod는 ALB 200 |
+| 잘못된 canary 배포 | 약 2분 10초(10% weight + pause 포함) | stable 데이터 유지 | Analysis Error 후 stable 100% 복귀 |
+| RDS failover/read replica lag | 미실행 | 미실행 | 실제 DB 장애 복구 수치로 주장하지 않음 |

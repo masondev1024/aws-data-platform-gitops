@@ -23,7 +23,7 @@ data:
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
           "targets": [
             {
-              "expr": "sum by (route, status) (rate(raffle_http_requests_total[5m]))",
+              "expr": "sum by (route, status) (max by (pod, route, status) (rate(raffle_http_requests_total[5m])))",
               "legendFormat": "{{route}} {{status}}",
               "refId": "A"
             }
@@ -38,7 +38,7 @@ data:
           "fieldConfig": {"defaults": {"unit": "s", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0.5}]}}},
           "targets": [
             {
-              "expr": "histogram_quantile(0.95, sum by (le) (rate(raffle_http_request_duration_seconds_bucket{route=\"/api/apply\"}[5m])))",
+              "expr": "histogram_quantile(0.95, sum by (le) (max by (pod, le, route) (rate(raffle_http_request_duration_seconds_bucket{route=\"/api/apply\"}[5m]))))",
               "legendFormat": "p95",
               "refId": "A"
             }
@@ -53,7 +53,7 @@ data:
           "fieldConfig": {"defaults": {"unit": "percentunit"}},
           "targets": [
             {
-              "expr": "sum(rate(raffle_http_requests_total{route=\"/api/apply\",status=~\"5..\"}[5m])) / clamp_min(sum(rate(raffle_http_requests_total{route=\"/api/apply\"}[5m])), 1)",
+              "expr": "sum by (route) (max by (pod, route, status) (rate(raffle_http_requests_total{route=\"/api/apply\",status=~\"5..\"}[5m]))) / clamp_min(sum by (route) (max by (pod, route, status) (rate(raffle_http_requests_total{route=\"/api/apply\"}[5m]))), 1)",
               "legendFormat": "5xx ratio",
               "refId": "A"
             }
@@ -74,7 +74,7 @@ data:
           "title": "Apply outcomes",
           "datasource": {"type": "prometheus", "uid": "prometheus"},
           "gridPos": {"h": 8, "w": 6, "x": 18, "y": 8},
-          "targets": [{"expr": "sum by (result) (rate(raffle_apply_requests_total[5m]))", "legendFormat": "{{result}}", "refId": "A"}]
+          "targets": [{"expr": "sum by (result) (max by (pod, result) (rate(raffle_apply_requests_total[5m])))", "legendFormat": "{{result}}", "refId": "A"}]
         }
       ]
     }

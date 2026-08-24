@@ -24,6 +24,24 @@ resource "helm_release" "alb_controller" {
     value = aws_eks_cluster.main.name
   }
 
+  # ALB Controller가 private node에서 IMDS로 VPC ID를 찾지 못해 CrashLoop하지
+  # 않도록 IaC에서 계정/클러스터 좌표를 명시한다.
+  set {
+    name  = "region"
+    value = var.aws_region
+  }
+
+  set {
+    name  = "vpcId"
+    value = aws_vpc.main.id
+  }
+
+  # 단일 t3.medium 검증 노드에서는 webhook 가용성만 필요하므로 replica를 축소한다.
+  set {
+    name  = "replicaCount"
+    value = "1"
+  }
+
   set {
     name  = "serviceAccount.create"
     value = "true"
@@ -47,6 +65,11 @@ resource "helm_release" "argo_rollouts" {
   chart            = "argo-rollouts"
   namespace        = "argo-rollouts"
   create_namespace = true
+
+  set {
+    name  = "controller.replicas"
+    value = "1"
+  }
 }
 
 # 4. Metrics Server (HPA 작동 필수)

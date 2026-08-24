@@ -11,9 +11,9 @@ spec:
       rules:
         - alert: RaffleApplyHighErrorRate
           expr: >-
-            sum(rate(raffle_http_requests_total{route="/api/apply",status=~"5.."}[5m]))
+            sum by (route) (max by (pod, route, status) (rate(raffle_http_requests_total{route="/api/apply",status=~"5.."}[5m])))
             /
-            clamp_min(sum(rate(raffle_http_requests_total{route="/api/apply"}[5m])), 1)
+            clamp_min(sum by (route) (max by (pod, route, status) (rate(raffle_http_requests_total{route="/api/apply"}[5m]))), 1)
             > 0.01
           for: 5m
           labels:
@@ -35,7 +35,7 @@ spec:
           expr: >-
             histogram_quantile(
               0.95,
-              sum by (le) (rate(raffle_http_request_duration_seconds_bucket{route="/api/apply"}[5m]))
+              sum by (le) (max by (pod, le, route) (rate(raffle_http_request_duration_seconds_bucket{route="/api/apply"}[5m])))
             ) > 0.5
           for: 10m
           labels:

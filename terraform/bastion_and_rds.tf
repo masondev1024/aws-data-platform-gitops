@@ -83,6 +83,7 @@ resource "aws_db_instance" "primary" {
 }
 
 resource "aws_db_instance" "replica" {
+  count                  = var.enable_rds_replica ? 1 : 0
   identifier             = "data-pipeline-replica"
   replicate_source_db    = aws_db_instance.primary.identifier
   instance_class         = "db.t3.micro"
@@ -91,4 +92,3 @@ resource "aws_db_instance" "replica" {
   skip_final_snapshot    = true
   availability_zone      = data.aws_availability_zones.available.names[1]
 }
-

@@ -8,8 +8,8 @@ metadata:
       {"type":"fixed-response","fixedResponseConfig":{"contentType":"text/plain","statusCode":"404","messageBody":"not found"}}
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
-  ingressClassName: alb
 spec:
+  ingressClassName: alb
   rules:
     - http:
         paths:

@@ -55,21 +55,10 @@ resource "aws_ecr_lifecycle_policy" "app_repo_policy" {
 ############################
 # GitHub Actions OIDC Provider
 ############################
-resource "aws_iam_openid_connect_provider" "github_actions" {
+# GitHub Actions OIDC is account-scoped and shared by repositories. Bootstrap
+# owns it; this workload stack only reads the already-created provider.
+data "aws_iam_openid_connect_provider" "github_actions" {
   url = "https://token.actions.githubusercontent.com"
-
-  client_id_list = [
-    "sts.amazonaws.com"
-  ]
-
-  thumbprint_list = [
-    "6938fd4d98bab03faadb97b34396831e3780aea1"
-  ]
-
-  tags = {
-    Name      = "github-actions-oidc"
-    ManagedBy = "Terraform"
-  }
 }
 
 ############################
@@ -84,7 +73,7 @@ resource "aws_iam_role" "github_actions_role" {
       {
         Effect = "Allow"
         Principal = {
-          Federated = aws_iam_openid_connect_provider.github_actions.arn
+          Federated = data.aws_iam_openid_connect_provider.github_actions.arn
         }
         Action = "sts:AssumeRoleWithWebIdentity"
         Condition = {
@@ -181,5 +170,5 @@ output "github_actions_role_arn" {
 
 output "github_actions_oidc_provider_arn" {
   description = "OIDC provider ARN for GitHub Actions"
-  value       = aws_iam_openid_connect_provider.github_actions.arn
+  value       = data.aws_iam_openid_connect_provider.github_actions.arn
 }

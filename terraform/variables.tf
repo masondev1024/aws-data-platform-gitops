@@ -66,3 +66,60 @@ variable "alertmanager_webhook_url" {
     error_message = "alertmanager_webhook_url must be a non-empty webhook URL."
   }
 }
+
+variable "enable_rds_replica" {
+  description = "Create the read replica only for an explicitly approved HA/replica-lag test."
+  type        = bool
+  default     = false
+}
+
+variable "enable_multi_az_nat" {
+  description = "Create the second NAT Gateway only for an explicitly approved multi-AZ resilience test."
+  type        = bool
+  default     = false
+}
+
+variable "eks_node_instance_type" {
+  description = "Worker instance type for the short-lived application validation profile."
+  type        = string
+  default     = "t3.medium"
+}
+
+variable "eks_node_desired_size" {
+  description = "Minimum worker count for short-lived validation."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.eks_node_desired_size >= 1
+    error_message = "eks_node_desired_size must be at least 1."
+  }
+}
+
+variable "eks_node_min_size" {
+  description = "Minimum managed node group size."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.eks_node_min_size >= 1
+    error_message = "eks_node_min_size must be at least 1."
+  }
+}
+
+variable "eks_node_max_size" {
+  description = "Maximum managed node group size for the validation profile."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.eks_node_max_size >= var.eks_node_min_size
+    error_message = "eks_node_max_size must be greater than or equal to eks_node_min_size."
+  }
+}
+
+variable "allow_full_stack_apply" {
+  description = "Explicit cost approval gate for the complete EKS/RDS/NAT/ALB stack."
+  type        = bool
+  default     = false
+}

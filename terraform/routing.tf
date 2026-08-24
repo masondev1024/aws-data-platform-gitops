@@ -1,5 +1,8 @@
 resource "aws_eip" "nat_a" { domain = "vpc" }
-resource "aws_eip" "nat_b" { domain = "vpc" }
+resource "aws_eip" "nat_b" {
+  count  = var.enable_multi_az_nat ? 1 : 0
+  domain = "vpc"
+}
 
 resource "aws_nat_gateway" "nat_a" {
   allocation_id = aws_eip.nat_a.id
@@ -8,7 +11,8 @@ resource "aws_nat_gateway" "nat_a" {
 }
 
 resource "aws_nat_gateway" "nat_b" {
-  allocation_id = aws_eip.nat_b.id
+  count         = var.enable_multi_az_nat ? 1 : 0
+  allocation_id = aws_eip.nat_b[0].id
   subnet_id     = aws_subnet.public_b.id
   tags          = { Name = "nat-gw-b" }
 }
@@ -50,7 +54,7 @@ resource "aws_route_table" "app_b" {
   vpc_id = aws_vpc.main.id
   route {
     cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.nat_b.id
+    nat_gateway_id = var.enable_multi_az_nat ? aws_nat_gateway.nat_b[0].id : aws_nat_gateway.nat_a.id
   }
   tags = { Name = "rtb-app-b" }
 }
