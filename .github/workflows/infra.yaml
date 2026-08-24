@@ -38,7 +38,7 @@ jobs:
 
   terraform-plan:
     name: Terraform plan
-    if: ${{ vars.AWS_ROLE_TO_ASSUME != '' }}
+    if: ${{ github.event_name == 'push' && vars.AWS_TERRAFORM_ROLE_TO_ASSUME != '' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -51,7 +51,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
+          role-to-assume: ${{ vars.AWS_TERRAFORM_ROLE_TO_ASSUME }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -65,9 +65,9 @@ jobs:
 
   terraform-plan-not-configured:
     name: Terraform plan configuration notice
-    if: ${{ vars.AWS_ROLE_TO_ASSUME == '' }}
+    if: ${{ github.event_name != 'push' || vars.AWS_TERRAFORM_ROLE_TO_ASSUME == '' }}
     runs-on: ubuntu-latest
     steps:
       - name: Explain skipped cloud plan
         run: |
-          echo "::warning::Terraform plan was not run because repository variable AWS_ROLE_TO_ASSUME is not configured."
+          echo "::warning::Terraform cloud plan was not run because AWS_TERRAFORM_ROLE_TO_ASSUME is not configured or this is a pull request."
