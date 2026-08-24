@@ -90,10 +90,9 @@ resource "aws_iam_role" "github_actions_role" {
         Condition = {
           StringEquals = {
             "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-          }
-          StringLike = {
-            # 예: repo:yooseongjin527/asac_de2_infra_1st:ref:refs/heads/main
-            "token.actions.githubusercontent.com:sub" = "repo:${var.github_owner}/${var.github_repo}:ref:refs/heads/${var.github_branch}"
+            # GitHub's immutable subject format survives repository renames:
+            # repo:OWNER@OWNER_ID/REPO@REPO_ID:ref:refs/heads/BRANCH
+            "token.actions.githubusercontent.com:sub" = "repo:${var.github_owner}@${var.github_owner_id}/${var.github_repo}@${var.github_repo_id}:ref:refs/heads/${var.github_branch}"
           }
         }
       }

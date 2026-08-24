@@ -21,10 +21,22 @@ variable "github_owner" {
   default     = "masondev1024"
 }
 
+variable "github_owner_id" {
+  description = "Stable GitHub owner ID used by the immutable Actions OIDC subject claim"
+  type        = string
+  default     = "269997727"
+}
+
 variable "github_repo" {
   description = "GitHub repository name"
   type        = string
   default     = "aws-data-platform-gitops"
+}
+
+variable "github_repo_id" {
+  description = "Stable GitHub repository ID used by the immutable Actions OIDC subject claim"
+  type        = string
+  default     = "1202584860"
 }
 
 variable "github_branch" {

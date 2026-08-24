@@ -134,3 +134,31 @@ GitHub Actions가 assume할 OIDC role ARN이 저장소 변수에 등록되지 �
 - CD 재실행 결과 OIDC 인증, ECR push, image SHA 갱신, Kustomize validation, manifest commit이 모두 성공했다.
 
 Terraform 전체 plan은 별도 권한이 필요하다. 현재 CD role은 의도적으로 ECR push 중심의 최소 권한이므로, 전체 인프라 plan/apply에는 별도의 Terraform role과 workflow variable을 사용해야 한다.
+
+## 8. Repository rename 이후 OIDC assume-role 실패
+
+### 증상
+
+저장소명을 `develope-project`에서 `aws-data-platform-gitops`로 변경한 뒤, GitHub Actions의 AWS 인증 단계에서 다음 오류가 발생했다.
+
+```text
+Could not assume role with OIDC: Not authorized to perform sts:AssumeRoleWithWebIdentity
+```
+
+### 원인
+
+2026-07-15 이후 GitHub는 새로 생성되거나 이름이 변경된 저장소의 OIDC `sub` claim에 owner/repository ID를 포함하는 immutable subject 형식을 적용한다. 이름만 포함한 기존 trust condition은 새 토큰과 일치하지 않는다.
+
+### 조치
+
+IAM trust policy를 다음 형식으로 변경했다.
+
+```text
+repo:masondev1024@269997727/aws-data-platform-gitops@1202584860:ref:refs/heads/main
+```
+
+Terraform에도 `github_owner_id`와 `github_repo_id`를 명시해 저장소 이름 변경에 영향을 받지 않는 subject를 사용하도록 반영했다. 이후 새 `main` 커밋에서 CD를 재실행해 OIDC 인증을 검증한다.
+
+### 운영 교훈
+
+GitHub 저장소명을 변경할 때는 URL, Argo CD `repoURL`, Terraform 변수뿐 아니라 OIDC trust policy의 subject claim도 함께 확인해야 한다. 장기적으로는 owner/repository ID 기반 claim을 사용하고, branch/environment 범위는 `StringEquals`로 최소화한다.
