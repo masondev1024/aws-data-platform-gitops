@@ -1,4 +1,6 @@
-# ASAC 데이터 엔지니어 2기 인프라 프로젝트 1조
+# AWS Data Platform GitOps
+
+기존 래플 트래픽 응모 시스템에서 구현하지 못했던 운영 인프라와 배포 자동화를 확장한 프로젝트입니다. AWS와 Terraform을 기반으로 EKS, ECR, GitHub Actions OIDC, Argo CD GitOps, Argo Rollouts canary 배포 흐름을 구성했습니다.
 
 ## CI/CD
 
