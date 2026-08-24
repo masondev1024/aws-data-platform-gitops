@@ -6,14 +6,18 @@ on:
     paths:
       - "app/**"
       - "k8s/**"
+      - "loadtest/**"
       - "terraform/**"
+      - "docs/**"
       - ".github/workflows/**"
   push:
     branches: [main]
     paths:
       - "app/**"
       - "k8s/**"
+      - "loadtest/**"
       - "terraform/**"
+      - "docs/**"
       - ".github/workflows/**"
 
 permissions:
@@ -56,6 +60,17 @@ jobs:
         run: kubectl kustomize k8s/overlays/prod > /tmp/rendered-manifests.yaml
       - name: Ensure the rendered manifest is non-empty
         run: test -s /tmp/rendered-manifests.yaml
+
+  loadtest-script:
+    name: k6 load-test script validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect k6 scenarios and thresholds
+        run: >-
+          docker run --rm -i
+          grafana/k6@sha256:5221b620a4f874faff6e32ba597aa667c058391fe4898b1c6f6377f062c6cdec
+          inspect - < loadtest/raffle.js
 
   terraform:
     name: Terraform validation

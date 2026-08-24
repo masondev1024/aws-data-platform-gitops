@@ -49,6 +49,17 @@ terraform fmt -check -recursive
 terraform validate
 ```
 
+## 비용 안전 게이트
+
+기본 Terraform 프로필은 EKS·EC2·NAT·ALB·RDS를 포함하므로 비용 승인 없이 실행되지 않도록 `allow_full_stack_apply=false`가 기본값입니다. 전체 애플리케이션 인프라를 실제로 검증할 때만 종료 담당자와 비용 상한을 정한 뒤 다음 변수를 명시합니다.
+
+```bash
+cd terraform
+terraform plan -var='allow_full_stack_apply=true'
+```
+
+테스트 비용을 줄이기 위해 기본값은 EKS worker 1대(`t3.medium`), NAT Gateway 1개, RDS primary만 사용하도록 조정했습니다. 고가용성 검증이 필요한 경우에만 `enable_multi_az_nat=true`, `enable_rds_replica=true`, node 수 증가를 별도로 선택합니다. 전체 선택 근거와 실제 측정값은 [`docs/data-engineering-decisions.md`](docs/data-engineering-decisions.md), [`docs/lessons-learned.md`](docs/lessons-learned.md), [`docs/failure-drills.md`](docs/failure-drills.md)에 기록합니다.
+
 ## 배포 전 조건
 
 클러스터에는 `raffle-config` ConfigMap과 `raffle-secret` Secret이 미리 있어야 합니다. 애플리케이션은 다음 환경 변수를 사용합니다.

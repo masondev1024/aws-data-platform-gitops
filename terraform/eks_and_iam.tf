@@ -45,6 +45,13 @@ resource "aws_iam_role_policy_attachment" "ecr_policy" {
 resource "aws_eks_cluster" "main" {
   name     = "data-engineer-cluster"
   role_arn = aws_iam_role.eks_cluster.arn
+
+  # Access Entry를 사용하면서 기존 aws-auth 호환성도 유지한다.
+  access_config {
+    authentication_mode                         = "API_AND_CONFIG_MAP"
+    bootstrap_cluster_creator_admin_permissions = true
+  }
+
   vpc_config {
     subnet_ids = [
       aws_subnet.app_private_a.id, aws_subnet.app_private_b.id,
@@ -59,11 +66,11 @@ resource "aws_eks_node_group" "main" {
   node_group_name = "app-node-group"
   node_role_arn   = aws_iam_role.eks_node.arn
   subnet_ids      = [aws_subnet.app_private_a.id, aws_subnet.app_private_b.id]
-  instance_types  = ["t3.medium"]
+  instance_types  = [var.eks_node_instance_type]
   scaling_config {
-    desired_size = 2
-    max_size     = 2
-    min_size     = 2
+    desired_size = var.eks_node_desired_size
+    max_size     = var.eks_node_max_size
+    min_size     = var.eks_node_min_size
   }
   depends_on = [
     aws_iam_role_policy_attachment.node_policy,

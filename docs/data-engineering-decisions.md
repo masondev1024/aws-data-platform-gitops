@@ -117,3 +117,96 @@ Terraform state는 원격 backend와 locking을 사용해야 한다. 로컬 stat
 - state lock을 사용해 동시 apply를 방지한다.
 - plan artifact와 state를 같은 수명주기로 관리하지 않는다.
 - 비밀번호 같은 sensitive 값은 state에도 남을 수 있으므로 backend 접근 권한을 최소화한다.
+
+## 8. 관측 데이터와 canary 판정
+
+### 결정
+
+Flask 애플리케이션은 bounded route label을 가진 Prometheus metrics를 제공하고, Kubernetes는 stable/canary ServiceMonitor를 분리한다. Argo Rollouts는 Prometheus에서 canary 5xx 비율과 응모 API p95를 조회한 뒤 단계별로 진행하거나 자동 중단한다.
+
+### 이유
+
+이미지 push 성공이나 readiness 통과만으로는 새 버전이 사용자 요청을 정상 처리한다는 것을 증명할 수 없다. 배포 중 실제 canary 트래픽의 오류율과 지연시간을 확인해야 rollback 기준이 데이터에 연결된다.
+
+### 안전장치
+
+- `/metrics`는 internet-facing ALB에서 404 fixed response로 차단한다.
+- Prometheus가 설치되지 않았거나 canary 데이터가 없으면 analysis를 성공으로 간주하지 않는다.
+- Alertmanager webhook을 Terraform 변수로 명시하지 않으면 monitoring stack을 apply할 수 없다.
+- 현재 analysis 주소와 ServiceMonitor label은 release 이름에 의존하므로 stack release 이름을 변경할 때 함께 검토한다.
+
+## 9. 부하 테스트의 증거 기준
+
+### 결정
+
+k6 시나리오는 health/readiness와 one-shot 응모를 분리하고, 결과에는 커밋 SHA·이미지 SHA·부하·지속시간·p50/p95/p99·HPA·DB 연결·replica lag·정확성 결과를 함께 기록한다.
+
+### 이유
+
+최고 순간 처리량 하나는 지속 가능한 용량이나 SLO 준수를 설명하지 못한다. 연속 구간에서 SLO를 통과한 가장 높은 부하를 용량 하한으로 보고, 실패 지점과 원인을 별도로 기록해야 capacity planning과 장애 대응에 재사용할 수 있다.
+
+## 10. 단기 검증 비용 프로필 분리
+
+### 결정
+
+로봇 데이터 파이프라인의 스트리밍 SLO 검증에는 전체 EKS 플랫폼 스택을 사용하지 않고 `terraform/validation` 전용 프로필을 사용한다. 이 프로필은 Kinesis → Firehose → S3 Parquet과 CloudWatch SLO만 검증하며, 검증이 끝나면 즉시 destroy한다.
+
+### 변경 전후
+
+| 항목 | 기존 전체 스택 | 단기 검증 프로필 | 효과 |
+|---|---:|---:|---|
+| Terraform plan 신규 리소스 | 104개 | 14개 | 약 86.5% 감소 |
+| EKS/EC2/NAT/ALB/ECR/RDS | 생성 | 생성하지 않음 | 고정 시간비용 제거 |
+| Kinesis main shard | 4개 + alert 1개 | main 2개 | shard 고정비 60% 감소 |
+| Firehose buffer | 128MB/300초 | 64MB/60초 | Parquet 변환을 유지하면서 freshness 피드백 최대 4분 단축 |
+| Slack/Lambda 알림 | Secret·Lambda 필요 | 검증 프로필에서 비활성 | Secret 의존성·정리 누락 제거 |
+| GitHub OIDC Provider | stack이 생성 시도 | 계정 공용 Provider를 data source로 읽기 | EntityAlreadyExists 재발 방지 |
+
+### 비용과 속도 근거
+
+기존 전체 스택의 월 환산 고정/저변동 비용은 약 `$218`이었고, 4시간 검증 안전 예산은 `$4~$10`으로 추정했다. 단기 프로필은 EKS control plane, worker, NAT, ECR, ALB가 없어 100Hz 단계 검증 기준 약 `$1~$3`으로 예산을 낮춘다. 1,000Hz를 4시간 내내 유지하면 Firehose 데이터량 비용이 지배하므로 약 `$4~$6`으로 별도 상한을 둔다.
+
+이번 실제 중단 사례에서 EKS 생성은 약 4분 50초, NAT Gateway 생성은 약 1분 59초가 걸렸다. 단기 프로필은 두 리소스를 생성하지 않으므로 해당 대기 구간을 제거한다. 실제 저비용 실행에서는 부분 state의 corrected apply 3개 리소스가 7.9초, 14개 destroy가 41.6초였으며, 빈 계정 기준 전체 apply 시간은 비용 상한 때문에 재실행하지 않았다.
+
+### 트레이드오프
+
+단기 프로필은 Kubernetes workload, HPA, ALB, RDS 복제 지연, Canary, Slack 전송을 검증하지 않는다. 이 항목들은 비용 승인 후 별도의 EKS 애플리케이션 프로필에서 실행해야 하며, 스트리밍 SLO 검증 결과와 섞어 주장하지 않는다.
+
+## 11. 지원 역량을 구현 증거와 검증 경계로 번역
+
+| SOOP/Prime Career 축 | 구현·증거 | 말할 수 있는 범위 |
+|---|---|---|
+| 성능·안정성의 지표화 | Prometheus SLI/SLO, Kinesis iterator age/throttle, Firehose freshness guardrail, capacity 문서 | streaming path 단기 AWS 검증 |
+| 변경 사전 차단·복구 | GitHub OIDC, SHA 이미지, Kustomize/Argo Rollouts analysis, Terraform cost precondition, failure drill | 코드·CI·runbook 구현 |
+| 멀티리전·멀티CDN·미디어 | 3-region/2-CDN topology와 outage failover lab | 로컬 simulation; 실제 CDN 운영은 미검증 |
+
+세 번째 축은 향후 synthetic segment probe, cache hit ratio, rebuffering, origin error, DNS/Anycast 전환시간을 실제 계층에서 측정해야 production claim으로 승격할 수 있다.
+## 12. 실제 short-lived 애플리케이션 검증 프로필
+
+2026-08-24에는 추정만 남기지 않고 `eu-west-1`의 EKS/RDS/ALB를 실제로 올려 API 경로와 장애 복구를 측정했다. 비용과 장애 범위를 제한하기 위해 EKS worker 1개(t3.medium), RDS `db.t3.micro` primary-only, HPA 2~4 replicas, Prometheus/Grafana 1개 stack을 사용했다. read replica, Multi-AZ, NAT 이중화는 이번 실험의 목표가 아니므로 만들지 않았다.
+
+이 선택은 고가용성의 증거가 아니라 변경·관측·복구 경로의 최소 재현이다. 따라서 결과에서 RDS replica lag, Multi-AZ failover, node-level eviction을 주장하지 않는다.
+
+## 13. HPA 상한과 scale rate를 비용 예산에 포함
+
+단일 검증 노드는 system/observability Pod가 이미 Pod capacity를 사용한다. CPU 기반 HPA의 `maxReplicas=20`을 그대로 두면 순간 부하가 11 replicas를 요구하면서 7개가 Pending이 될 수 있었다. 검증 profile은 `maxReplicas=4`, scale-up/down 각 1 Pod/60초로 제한했다.
+
+운영 profile에서 더 높은 용량이 필요하면 HPA 상한만 올리지 않고 다음을 함께 변경한다.
+
+- node autoscaling capacity와 Pod IP 상한
+- RDS connection budget과 DB CPU
+- ALB target health 및 canary traffic
+- scale-up 폭주를 막는 stabilization window
+- 부하 단계별 비용 상한
+
+## 14. Canary 분석은 메트릭 부재를 성공으로 간주하지 않음
+
+Argo Rollouts AnalysisTemplate은 canary 5xx 비율과 `/api/apply` p95를 Prometheus에서 조회한다. 실제 실패훈련에서 canary metric vector가 아직 생성되지 않자 AnalysisRun이 Error가 되었고 stable revision으로 자동 rollback했다. 이 fail-closed 정책은 잘못된 배포를 통과시키지 않는 장점이 있지만, 정상 운영 배포에는 synthetic canary traffic과 metric warm-up/no-data 판정을 runbook으로 묶어야 한다.
+
+stable/canary Service가 동일한 Pod hash를 가리키는 Rollout 완료 상태에서는 ServiceMonitor가 같은 Pod를 두 번 스크랩할 수 있다. Dashboard와 alert query는 `max by (pod, ...)` 후 집계하도록 바꾸어 정확성 지표의 중복을 제거했다.
+
+## 15. 실제 검증 결과를 용량 하한으로만 사용
+
+동일 이미지와 primary-only RDS 환경에서 readiness 20 req/s를 30초 유지했을 때 601/601 요청 성공, p50 약 320ms, p95 354.5ms, p99 406.5ms였다. 50 req/s 단계는 HTTP 오류 0%였지만 20개 arrival iteration이 drop됐으므로 지속 가능 용량으로 인정하지 않았다. 응모 one-shot 30 VU에서는 회원가입·로그인·응모 90개 요청이 모두 성공했고, `/api/apply` p95/p99는 약 510.9/534.1ms였다.
+
+따라서 현재 환경에서 말할 수 있는 것은 “20 req/s readiness 구간은 통과했고 50 req/s는 도착률 포화 신호를 보였다”이지, 일반 사용자 트래픽의 production capacity가 아니다. 다음 단계는 connection pooling, DB connection/lock metrics, 더 긴 steady-state 구간과 replica-enabled 비교다.

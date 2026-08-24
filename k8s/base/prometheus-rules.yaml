@@ -1,0 +1,46 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: data-pipeline-slo
+  labels:
+    monitoring: data-pipeline
+spec:
+  groups:
+    - name: data-pipeline.slo
+      interval: 30s
+      rules:
+        - alert: RaffleApplyHighErrorRate
+          expr: >-
+            sum by (route) (max by (pod, route, status) (rate(raffle_http_requests_total{route="/api/apply",status=~"5.."}[5m])))
+            /
+            clamp_min(sum by (route) (max by (pod, route, status) (rate(raffle_http_requests_total{route="/api/apply"}[5m]))), 1)
+            > 0.01
+          for: 5m
+          labels:
+            severity: page
+            service: data-pipeline
+          annotations:
+            summary: Raffle application API has a high server error rate
+            description: More than 1% of raffle application requests returned 5xx for 5 minutes.
+        - alert: RaffleDatabaseReadinessLost
+          expr: max(raffle_db_readiness) < 1
+          for: 2m
+          labels:
+            severity: page
+            service: data-pipeline
+          annotations:
+            summary: Raffle application cannot reach the read database
+            description: The latest database readiness probe has been failing for at least 2 minutes.
+        - alert: RaffleApplyLatencyHigh
+          expr: >-
+            histogram_quantile(
+              0.95,
+              sum by (le) (max by (pod, le, route) (rate(raffle_http_request_duration_seconds_bucket{route="/api/apply"}[5m])))
+            ) > 0.5
+          for: 10m
+          labels:
+            severity: ticket
+            service: data-pipeline
+          annotations:
+            summary: Raffle application p95 latency is above the initial SLO
+            description: The p95 latency of /api/apply has exceeded 500ms for 10 minutes.
