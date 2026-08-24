@@ -157,7 +157,9 @@ IAM trust policy를 다음 형식으로 변경했다.
 repo:masondev1024@269997727/aws-data-platform-gitops@1202584860:ref:refs/heads/main
 ```
 
-Terraform에도 `github_owner_id`와 `github_repo_id`를 명시해 저장소 이름 변경에 영향을 받지 않는 subject를 사용하도록 반영했다. 이후 새 `main` 커밋에서 CD를 재실행해 OIDC 인증을 검증한다.
+Terraform에도 `github_owner_id`와 `github_repo_id`를 명시해 저장소 이름 변경에 영향을 받지 않는 subject를 사용하도록 반영했다. 새 `main` 커밋에서 CD를 재실행한 결과 OIDC 인증, ECR 로그인, SHA 이미지 push, manifest validation 및 Git commit까지 모두 성공했다.
+
+검증 run: https://github.com/masondev1024/aws-data-platform-gitops/actions/runs/32687411862
 
 ### 운영 교훈
 
