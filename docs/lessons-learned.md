@@ -60,3 +60,4 @@ EKS, NAT Gateway, RDS replica, ALB는 테스트가 끝나도 자동으로 사라
 - GitHub Actions role을 ECR push와 Terraform plan/apply role로 분리
 - CloudWatch/GitHub/Argo CD 알림과 SLO 정의
 - 실제 ingestion 데이터에 대한 data quality check 및 backfill runbook 추가
+- GitHub OIDC trust subject에 저장소 이름 대신 안정적인 owner/repository ID 사용
