@@ -1,7 +1,7 @@
 resource "aws_iam_role" "bastion" {
   name = "CommandServerRole-v2"
   assume_role_policy = jsonencode({
-    Version = "2012-10-17"
+    Version   = "2012-10-17"
     Statement = [{ Action = "sts:AssumeRole", Effect = "Allow", Principal = { Service = "ec2.amazonaws.com" } }]
   })
 }
@@ -30,8 +30,8 @@ resource "aws_iam_role_policy" "bastion_eks_describe" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect   = "Allow"
-        Action   = [
+        Effect = "Allow"
+        Action = [
           "eks:DescribeCluster",
           "eks:ListClusters"
         ]
@@ -50,14 +50,14 @@ data "aws_ssm_parameter" "ami" {
 }
 
 resource "aws_instance" "bastion" {
-  ami                  = data.aws_ssm_parameter.ami.value
-  instance_type        = "t3.micro"
-  subnet_id            = aws_subnet.public_a.id
+  ami                    = data.aws_ssm_parameter.ami.value
+  instance_type          = "t3.micro"
+  subnet_id              = aws_subnet.public_a.id
   vpc_security_group_ids = [aws_security_group.command_server.id]
-  iam_instance_profile = aws_iam_instance_profile.bastion.name
+  iam_instance_profile   = aws_iam_instance_profile.bastion.name
   # 퍼블릭 IP 할당 명시 (이미 서브넷 설정에 되어있지만 가독성을 위해 추가)
   associate_public_ip_address = true
-  tags                 = { Name = "bastion-host" }
+  tags                        = { Name = "bastion-host" }
 }
 
 resource "aws_db_subnet_group" "main" {
@@ -66,23 +66,23 @@ resource "aws_db_subnet_group" "main" {
 }
 
 resource "aws_db_instance" "primary" {
-  identifier             = "data-pipeline-primary"
-  engine                 = "mysql"
-  engine_version         = "8.0"
-  instance_class         = "db.t3.micro"
-  allocated_storage      = 20
-  db_subnet_group_name   = aws_db_subnet_group.main.name
-  vpc_security_group_ids = [aws_security_group.rds.id]
-  username               = "admin"
-  password               = "SuperSecretPassword123!" 
+  identifier              = "data-pipeline-primary"
+  engine                  = "mysql"
+  engine_version          = "8.0"
+  instance_class          = "db.t3.micro"
+  allocated_storage       = 20
+  db_subnet_group_name    = aws_db_subnet_group.main.name
+  vpc_security_group_ids  = [aws_security_group.rds.id]
+  username                = "admin"
+  password                = var.db_password
   backup_retention_period = 1
-  multi_az               = false
-  publicly_accessible    = false
-  skip_final_snapshot    = true 
-  availability_zone      = data.aws_availability_zones.available.names[0]
+  multi_az                = false
+  publicly_accessible     = false
+  skip_final_snapshot     = true
+  availability_zone       = data.aws_availability_zones.available.names[0]
 }
 
-resource "aws_db_instance" "replica" {  
+resource "aws_db_instance" "replica" {
   identifier             = "data-pipeline-replica"
   replicate_source_db    = aws_db_instance.primary.identifier
   instance_class         = "db.t3.micro"
@@ -91,5 +91,4 @@ resource "aws_db_instance" "replica" {
   skip_final_snapshot    = true
   availability_zone      = data.aws_availability_zones.available.names[1]
 }
-
 

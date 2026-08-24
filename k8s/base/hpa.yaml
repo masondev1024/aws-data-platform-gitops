@@ -1,13 +1,12 @@
-# V1 오토스케일러
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: data-pipeline-hpa
 spec:
   scaleTargetRef:
-    apiVersion: apps/v1
+    apiVersion: argoproj.io/v1alpha1
     kind: Rollout
-    name: data-pipeline-app
+    name: data-pipeline-rollout
   minReplicas: 2
   maxReplicas: 20
   metrics:

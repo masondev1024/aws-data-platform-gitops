@@ -4,13 +4,16 @@ metadata:
   name: raffle-draw-job
 spec:
   schedule: "* * * * *" # 매 1분마다 실행
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
       template:
         spec:
           containers:
           - name: draw-worker
-            image: 486053612615.dkr.ecr.eu-west-1.amazonaws.com/my-raffle-app:v1
+            image: data-pipeline-app:latest
             command: ["python", "draw_winner.py"]
             envFrom:
             - configMapRef:

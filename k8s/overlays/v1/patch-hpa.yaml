@@ -1,0 +1,7 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: data-pipeline-hpa
+spec:
+  scaleTargetRef:
+    name: data-pipeline-rollout-v1

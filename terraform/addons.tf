@@ -1,12 +1,12 @@
 # 1. AWS Load Balancer Controller용 IAM Role (IRSA)
 module "lb_role" {
-  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  version = "~> 5.0"
-  role_name = "eks-alb-controller-role"
+  source                                 = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version                                = "~> 5.0"
+  role_name                              = "eks-alb-controller-role"
   attach_load_balancer_controller_policy = true
   oidc_providers = {
     main = {
-      provider_arn               = aws_iam_openid_connect_provider.github_actions.arn # 기존 OIDC 활용
+      provider_arn               = aws_iam_openid_connect_provider.eks.arn
       namespace_service_accounts = ["kube-system:aws-load-balancer-controller"]
     }
   }

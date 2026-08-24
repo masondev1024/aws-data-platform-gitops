@@ -19,7 +19,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "data_lake_lifecycle" {
   rule {
     id     = "archive_cold_data"
     status = "Enabled"
-    
+
     # [추가] 빈 필터를 넣어 버킷 내 모든 객체에 적용됨을 명시함
     filter {}
 

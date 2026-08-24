@@ -3,8 +3,8 @@ resource "aws_iam_role" "eks_cluster" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
       Principal = { Service = "eks.amazonaws.com" }
     }]
   })
@@ -20,8 +20,8 @@ resource "aws_iam_role" "eks_node" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
       Principal = { Service = "ec2.amazonaws.com" }
     }]
   })
@@ -89,9 +89,9 @@ resource "aws_iam_role_policy" "bastion_eks_access" {
 
 # 2. EKS 클러스터 내부에서 Bastion 역할을 관리자로 등록 (Access Entry)
 resource "aws_eks_access_entry" "bastion" {
-  cluster_name      = aws_eks_cluster.main.name
-  principal_arn     = aws_iam_role.bastion.arn
-  type              = "STANDARD"
+  cluster_name  = aws_eks_cluster.main.name
+  principal_arn = aws_iam_role.bastion.arn
+  type          = "STANDARD"
 }
 
 resource "aws_eks_access_policy_association" "bastion_admin" {

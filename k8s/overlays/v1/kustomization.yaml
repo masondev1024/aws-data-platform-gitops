@@ -5,5 +5,8 @@ resources:
 nameSuffix: -v1
 images:
   - name: data-pipeline-app
-    newName: 123456789012.dkr.ecr.eu-west-1.amazonaws.com/data-pipeline-app
+    newName: data-pipeline-app
     newTag: v1 # 초기 배포 시 사용할 태그
+patches:
+  - path: patch-rollout.yaml
+  - path: patch-hpa.yaml

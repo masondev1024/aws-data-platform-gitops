@@ -12,7 +12,7 @@ variable "allowed_ssh_location" {
 variable "aws_region" {
   description = "The AWS region to deploy the infrastructure in"
   type        = string
-  default     = "eu-west-1" 
+  default     = "eu-west-1"
 }
 
 variable "github_owner" {
@@ -24,11 +24,22 @@ variable "github_owner" {
 variable "github_repo" {
   description = "GitHub repository name"
   type        = string
-  default     = "my-data-platform"
+  default     = "develope-project"
 }
 
 variable "github_branch" {
   description = "GitHub branch allowed to assume the OIDC role"
   type        = string
-  default     = "cicd_test"
+  default     = "main"
+}
+
+variable "db_password" {
+  description = "Master password for the RDS database"
+  type        = string
+  sensitive   = true
+
+  validation {
+    condition     = length(var.db_password) >= 16
+    error_message = "db_password must contain at least 16 characters."
+  }
 }

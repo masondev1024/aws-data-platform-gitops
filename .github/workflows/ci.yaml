@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "k8s/**"
+      - "terraform/**"
+      - ".github/workflows/**"
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "k8s/**"
+      - "terraform/**"
+      - ".github/workflows/**"
+
+permissions:
+  contents: read
+
+jobs:
+  app-tests:
+    name: Application tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: app/requirements*.txt
+
+      - name: Install dependencies
+        run: python -m pip install -r app/requirements-dev.txt
+
+      - name: Run tests
+        run: python -m pytest -q app/tests
+
+  docker-build:
+    name: Docker build
+    needs: app-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build --pull --tag data-pipeline-app:ci ./app
+
+  kubernetes-manifests:
+    name: Kubernetes manifest validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Render production overlay
+        run: kubectl kustomize k8s/overlays/prod > /tmp/rendered-manifests.yaml
+      - name: Ensure the rendered manifest is non-empty
+        run: test -s /tmp/rendered-manifests.yaml
+
+  terraform:
+    name: Terraform validation
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: Initialize providers without a backend
+        run: terraform init -backend=false -input=false
+      - name: Check formatting
+        run: terraform fmt -check -recursive
+      - name: Validate configuration
+        run: terraform validate
