@@ -61,3 +61,6 @@ EKS, NAT Gateway, RDS replica, ALB는 테스트가 끝나도 자동으로 사라
 - CloudWatch/GitHub/Argo CD 알림과 SLO 정의
 - 실제 ingestion 데이터에 대한 data quality check 및 backfill runbook 추가
 - GitHub OIDC trust subject에 저장소 이름 대신 안정적인 owner/repository ID 사용
+- 메트릭을 추가할 때 공개 ALB 경로와 내부 scrape 경계를 함께 설계
+- canary 자동 롤백은 Prometheus 설치·ServiceMonitor·알림 수신자까지 준비된 뒤 활성화
+- 부하 테스트 결과가 없으면 처리량과 SLA를 주장하지 않고, 측정 템플릿을 먼저 커밋

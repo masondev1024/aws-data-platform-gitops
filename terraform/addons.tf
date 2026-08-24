@@ -56,3 +56,121 @@ resource "helm_release" "metrics_server" {
   chart      = "metrics-server"
   namespace  = "kube-system"
 }
+
+# 5. Prometheus, Grafana, and Alertmanager.
+# The chart is pinned so a future chart release cannot silently change
+# scrape, alerting, or CRD behavior during an infrastructure apply.
+resource "helm_release" "kube_prometheus_stack" {
+  name             = "kube-prometheus-stack"
+  repository       = "https://prometheus-community.github.io/helm-charts"
+  chart            = "kube-prometheus-stack"
+  version          = "88.5.4"
+  namespace        = "monitoring"
+  create_namespace = true
+  atomic           = true
+  cleanup_on_fail  = true
+  timeout          = 900
+
+  values = [yamlencode({
+    crds = {
+      enabled = true
+    }
+    grafana = {
+      enabled = true
+      service = {
+        type = "ClusterIP"
+      }
+      persistence = {
+        enabled = false
+      }
+      resources = {
+        requests = {
+          cpu    = "100m"
+          memory = "128Mi"
+        }
+        limits = {
+          cpu    = "300m"
+          memory = "512Mi"
+        }
+      }
+      sidecar = {
+        dashboards = {
+          enabled         = true
+          searchNamespace = "default"
+        }
+      }
+    }
+    prometheus = {
+      enabled = true
+      service = {
+        type = "ClusterIP"
+      }
+      prometheusSpec = {
+        retention                               = "7d"
+        scrapeInterval                          = "15s"
+        evaluationInterval                      = "15s"
+        serviceMonitorSelectorNilUsesHelmValues = false
+        serviceMonitorSelector = {
+          matchLabels = {
+            monitoring = "data-pipeline"
+          }
+        }
+        serviceMonitorNamespaceSelector = {}
+        ruleSelectorNilUsesHelmValues   = false
+        ruleSelector = {
+          matchLabels = {
+            monitoring = "data-pipeline"
+          }
+        }
+        ruleNamespaceSelector = {}
+        resources = {
+          requests = {
+            cpu    = "250m"
+            memory = "512Mi"
+          }
+          limits = {
+            cpu    = "750m"
+            memory = "1Gi"
+          }
+        }
+      }
+    }
+    alertmanager = {
+      enabled = true
+      alertmanagerSpec = {
+        retention = "72h"
+        resources = {
+          requests = {
+            cpu    = "100m"
+            memory = "128Mi"
+          }
+          limits = {
+            cpu    = "300m"
+            memory = "256Mi"
+          }
+        }
+      }
+      config = {
+        route = {
+          receiver        = "generic-webhook"
+          group_by        = ["alertname", "service"]
+          group_wait      = "30s"
+          group_interval  = "5m"
+          repeat_interval = "4h"
+        }
+        receivers = [{
+          name = "generic-webhook"
+          webhook_configs = [{
+            url           = var.alertmanager_webhook_url
+            send_resolved = true
+          }]
+        }]
+      }
+    }
+  })]
+
+  depends_on = [
+    helm_release.argo_rollouts,
+    helm_release.metrics_server,
+  ]
+}

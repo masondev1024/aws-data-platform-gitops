@@ -4,6 +4,8 @@ metadata:
   name: data-pipeline-ingress
   annotations:
     kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/actions.metrics-block: >-
+      {"type":"fixed-response","fixedResponseConfig":{"contentType":"text/plain","statusCode":"404","messageBody":"not found"}}
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
   ingressClassName: alb
@@ -11,6 +13,14 @@ spec:
   rules:
     - http:
         paths:
+          # Metrics are scraped from Pod IPs inside the cluster. Do not expose
+          # the endpoint through the internet-facing ALB.
+          - path: /metrics
+            pathType: Prefix
+            backend:
+              service:
+                name: metrics-block
+                port: { name: use-annotation }
           - path: /
             pathType: Prefix
             backend:

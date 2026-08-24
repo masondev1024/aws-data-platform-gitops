@@ -55,3 +55,14 @@ variable "db_password" {
     error_message = "db_password must contain at least 16 characters."
   }
 }
+
+variable "alertmanager_webhook_url" {
+  description = "Webhook URL used by Alertmanager for SLO and rollout alerts"
+  type        = string
+  sensitive   = true
+
+  validation {
+    condition     = length(var.alertmanager_webhook_url) >= 20
+    error_message = "alertmanager_webhook_url must be a non-empty webhook URL."
+  }
+}

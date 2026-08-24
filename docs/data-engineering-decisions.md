@@ -117,3 +117,30 @@ Terraform state는 원격 backend와 locking을 사용해야 한다. 로컬 stat
 - state lock을 사용해 동시 apply를 방지한다.
 - plan artifact와 state를 같은 수명주기로 관리하지 않는다.
 - 비밀번호 같은 sensitive 값은 state에도 남을 수 있으므로 backend 접근 권한을 최소화한다.
+
+## 8. 관측 데이터와 canary 판정
+
+### 결정
+
+Flask 애플리케이션은 bounded route label을 가진 Prometheus metrics를 제공하고, Kubernetes는 stable/canary ServiceMonitor를 분리한다. Argo Rollouts는 Prometheus에서 canary 5xx 비율과 응모 API p95를 조회한 뒤 단계별로 진행하거나 자동 중단한다.
+
+### 이유
+
+이미지 push 성공이나 readiness 통과만으로는 새 버전이 사용자 요청을 정상 처리한다는 것을 증명할 수 없다. 배포 중 실제 canary 트래픽의 오류율과 지연시간을 확인해야 rollback 기준이 데이터에 연결된다.
+
+### 안전장치
+
+- `/metrics`는 internet-facing ALB에서 404 fixed response로 차단한다.
+- Prometheus가 설치되지 않았거나 canary 데이터가 없으면 analysis를 성공으로 간주하지 않는다.
+- Alertmanager webhook을 Terraform 변수로 명시하지 않으면 monitoring stack을 apply할 수 없다.
+- 현재 analysis 주소와 ServiceMonitor label은 release 이름에 의존하므로 stack release 이름을 변경할 때 함께 검토한다.
+
+## 9. 부하 테스트의 증거 기준
+
+### 결정
+
+k6 시나리오는 health/readiness와 one-shot 응모를 분리하고, 결과에는 커밋 SHA·이미지 SHA·부하·지속시간·p50/p95/p99·HPA·DB 연결·replica lag·정확성 결과를 함께 기록한다.
+
+### 이유
+
+최고 순간 처리량 하나는 지속 가능한 용량이나 SLO 준수를 설명하지 못한다. 연속 구간에서 SLO를 통과한 가장 높은 부하를 용량 하한으로 보고, 실패 지점과 원인을 별도로 기록해야 capacity planning과 장애 대응에 재사용할 수 있다.
