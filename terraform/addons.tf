@@ -182,6 +182,10 @@ resource "helm_release" "kube_prometheus_stack" {
           repeat_interval = "4h"
         }
         receivers = [{
+          # kube-prometheus-stack adds a default Watchdog route that targets
+          # this receiver. Keep it even when supplying a custom receiver list.
+          name = "null"
+          }, {
           name = "generic-webhook"
           webhook_configs = [{
             url           = var.alertmanager_webhook_url

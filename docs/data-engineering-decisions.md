@@ -183,9 +183,9 @@ k6 시나리오는 health/readiness와 one-shot 응모를 분리하고, 결과�
 세 번째 축은 향후 synthetic segment probe, cache hit ratio, rebuffering, origin error, DNS/Anycast 전환시간을 실제 계층에서 측정해야 production claim으로 승격할 수 있다.
 ## 12. 실제 short-lived 애플리케이션 검증 프로필
 
-2026-08-24에는 추정만 남기지 않고 `eu-west-1`의 EKS/RDS/ALB를 실제로 올려 API 경로와 장애 복구를 측정했다. 비용과 장애 범위를 제한하기 위해 EKS worker 1개(t3.medium), RDS `db.t3.micro` primary-only, HPA 2~4 replicas, Prometheus/Grafana 1개 stack을 사용했다. read replica, Multi-AZ, NAT 이중화는 이번 실험의 목표가 아니므로 만들지 않았다.
+2026-08-24에는 추정만 남기지 않고 `eu-west-1`의 EKS/RDS/ALB를 실제로 올려 API 경로와 장애 복구를 측정했다. 비용과 장애 범위를 제한하기 위해 EKS worker 1개(t3.medium), RDS `db.t3.micro`를 사용했고, 정상 baseline은 primary 경로로 먼저 검증한 뒤 승인된 soak 실행에서만 Multi-AZ standby와 force failover를 활성화했다. HPA 2~4 replicas와 Prometheus/Grafana 1개 stack을 사용했으며 NAT 이중화와 read replica는 만들지 않았다.
 
-이 선택은 고가용성의 증거가 아니라 변경·관측·복구 경로의 최소 재현이다. 따라서 결과에서 RDS replica lag, Multi-AZ failover, node-level eviction을 주장하지 않는다.
+이 선택은 전체 고가용성 운영의 증거가 아니라 변경·관측·복구 경로를 비용 통제된 범위에서 재현한 것이다. Multi-AZ failover는 실제 force-failover 결과와 애플리케이션 RTO 21.112초를 기록했지만, RDS replica lag과 node-level eviction은 주장하지 않는다.
 
 ## 13. HPA 상한과 scale rate를 비용 예산에 포함
 
@@ -207,6 +207,6 @@ stable/canary Service가 동일한 Pod hash를 가리키는 Rollout 완료 상�
 
 ## 15. 실제 검증 결과를 용량 하한으로만 사용
 
-동일 이미지와 primary-only RDS 환경에서 readiness 20 req/s를 30초 유지했을 때 601/601 요청 성공, p50 약 320ms, p95 354.5ms, p99 406.5ms였다. 50 req/s 단계는 HTTP 오류 0%였지만 20개 arrival iteration이 drop됐으므로 지속 가능 용량으로 인정하지 않았다. 응모 one-shot 30 VU에서는 회원가입·로그인·응모 90개 요청이 모두 성공했고, `/api/apply` p95/p99는 약 510.9/534.1ms였다.
+동일 이미지와 RDS baseline 환경에서 readiness 20 req/s를 30초 유지했을 때 601/601 요청 성공, p50 약 320ms, p95 354.5ms, p99 406.5ms였다. 45분 soak에서는 약 19.94 req/s, 53,833회 요청을 처리했고 RDS Multi-AZ force failover 구간의 관측 애플리케이션 RTO는 21.112초였다. 50 req/s 단계는 HTTP 오류 0%였지만 20개 arrival iteration이 drop됐으므로 지속 가능 용량으로 인정하지 않았다. 응모 one-shot 30 VU에서는 회원가입·로그인·응모 90개 요청이 모두 성공했고, `/api/apply` p95/p99는 약 510.9/534.1ms였다.
 
 따라서 현재 환경에서 말할 수 있는 것은 “20 req/s readiness 구간은 통과했고 50 req/s는 도착률 포화 신호를 보였다”이지, 일반 사용자 트래픽의 production capacity가 아니다. 다음 단계는 connection pooling, DB connection/lock metrics, 더 긴 steady-state 구간과 replica-enabled 비교다.
