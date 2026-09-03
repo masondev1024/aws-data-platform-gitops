@@ -1,6 +1,6 @@
 # Failure drills와 운영 런북
 
-> 상태: EKS/RDS 장애 주입은 미실행. 비용을 발생시키지 않는 streaming 검증과 로컬 edge failover lab은 별도 실행했다.
+> 상태: Pod·DB endpoint·잘못된 canary·RDS Multi-AZ failover의 short-lived 장애 주입을 완료했다. read replica lag, Prometheus scrape 중단, Alertmanager webhook 장애는 별도 미실행이다.
 
 ## 공통 실행 규칙
 
@@ -14,10 +14,11 @@
 
 | ID | 주입 상황 | 기대 감지 | 복구 기준 | 현재 상태 |
 | --- | --- | --- | --- | --- |
-| FD-001 | 새 이미지가 `/readyz`에 실패 | Rollout analysis/readiness | Argo Rollouts abort 후 stable 복귀 | 실행 필요 |
-| FD-002 | canary Pod 강제 종료 | Pod restart/rollout metric | ReplicaSet 재생성, error budget 영향 없음 | 실행 필요 |
+| FD-001 | 새 이미지가 `/readyz`에 실패 | Rollout analysis/readiness | Argo Rollouts abort 후 stable 복귀 | 완료 · Analysis Error 후 stable 100% |
+| FD-002 | canary Pod 강제 종료 | Pod restart/rollout metric | ReplicaSet 재생성, error budget 영향 없음 | 완료 · 약 2초에 2 Ready |
 | FD-003 | read replica 연결 불가 | `RaffleDatabaseReadinessLost` + `/readyz` 503 | traffic 격리 후 DB 복구/endpoint 확인 | 실행 필요 |
-| FD-004 | writer DB 연결 불가 | `database_error`와 5xx/503 증가 | 재시도 폭풍 없이 복구, 응모 중복 0건 | 실행 필요 |
+| FD-004 | writer DB 연결 불가 | `database_error`와 5xx/503 증가 | 재시도 폭풍 없이 복구, 응모 중복 0건 | 부분 실행 · fault Pod endpoint 격리 |
+| FD-007 | RDS Multi-AZ writer failover | `/readyz` timeout/복구 probe | 같은 writer endpoint로 복귀, 애플리케이션 RTO 기록 | 완료 · application RTO 21.112초 |
 | FD-005 | Prometheus scrape 중단 | Analysis inconclusive | 배포 자동 중단, 관측 복구 후 재시도 | 실행 필요 |
 | FD-006 | Alertmanager webhook 실패 | Alertmanager delivery error | 알림 채널 복구, 대시보드에서 alert 확인 | 실행 필요 |
 
@@ -48,9 +49,9 @@ HAVING COUNT(*) > 1;
 
 | Drill | RTO 목표 | 실제 RTO | RPO 목표 | 실제 RPO | 데이터 검증 | 후속 작업 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 미실행 | 5분 이내 | - | 응모 확정 데이터 0건 손실 | - | 미실행 | 클러스터 재생성 후 실행 |
+| baseline/soak | 5분 이내 | Pod 약 2초, DB endpoint 약 9초, RDS Multi-AZ 21.112초 | 응모 확정 데이터 손실 없음 확인 범위 | row 대조 범위 내 미관측 | 정상화·teardown 감사 완료 | read replica lag 후속 |
 
-RTO/RPO는 설계 문구가 아니라 장애 주입 결과로만 확정한다. 특히 RDS failover와 read replica lag를 실행하지 않은 상태에서는 데이터 손실·복구 시간을 주장하지 않는다.
+RTO/RPO는 설계 문구가 아니라 장애 주입 결과로만 확정한다. 이번에는 RDS Multi-AZ failover의 애플리케이션 RTO를 기록했지만, read replica lag과 failover 전후 DB row 대조는 아직 별도 검증하지 않았다.
 
 ## 비용 가드레일과 검증 순서
 
@@ -98,11 +99,12 @@ AnalysisRun에서 canary metric vector가 준비되지 않아 `slice index out o
 
 ## RTO/RPO 표 보정 — 2026-08-24 실행분
 
-앞의 초기 템플릿에서 `미실행`으로 남아 있던 항목은 아래 실제 short-lived EKS 실행 결과로 보정한다. RDS Multi-AZ failover와 read replica lag 자체는 구성하지 않았으므로 해당 수치는 여전히 미검증이다.
+앞의 초기 템플릿에서 `미실행`으로 남아 있던 항목은 아래 실제 short-lived EKS 실행 결과로 보정한다. RDS Multi-AZ failover는 실행했고, read replica lag은 별도 미검증으로 남긴다.
 
 | Drill | 실제 RTO | 실제 RPO | 판정 |
 |---|---:|---:|---|
 | Pod 삭제 | 약 2초 | 해당 없음 | 2 Ready 복구, Rollout Healthy |
 | DB 연결 장애 주입 | 약 9초 | 데이터 손실 없음 확인 범위 | 장애 Pod 격리, 기존 Pod는 ALB 200 |
 | 잘못된 canary 배포 | 약 2분 10초(10% weight + pause 포함) | stable 데이터 유지 | Analysis Error 후 stable 100% 복귀 |
-| RDS failover/read replica lag | 미실행 | 미실행 | 실제 DB 장애 복구 수치로 주장하지 않음 |
+| RDS Multi-AZ writer failover | 21.112초 | row 대조 미기록 | 동일 writer endpoint 복구, failover 구간 실패를 별도 집계 |
+| RDS read replica lag | 미실행 | 미실행 | 실제 replica 지연 수치로 주장하지 않음 |

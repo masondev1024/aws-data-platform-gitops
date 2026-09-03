@@ -76,10 +76,22 @@ resource "aws_db_instance" "primary" {
   username                = "admin"
   password                = var.db_password
   backup_retention_period = 1
-  multi_az                = false
+  multi_az                = var.enable_rds_multi_az
   publicly_accessible     = false
   skip_final_snapshot     = true
-  availability_zone       = data.aws_availability_zones.available.names[0]
+  # AWS chooses both AZs for a Multi-AZ instance. A fixed AZ is valid only
+  # for the cost-optimized Single-AZ validation profile.
+  availability_zone = var.enable_rds_multi_az ? null : data.aws_availability_zones.available.names[0]
+}
+
+output "rds_primary_identifier" {
+  description = "RDS primary identifier used by the failover drill."
+  value       = aws_db_instance.primary.identifier
+}
+
+output "rds_primary_endpoint" {
+  description = "RDS writer endpoint used by the application."
+  value       = aws_db_instance.primary.address
 }
 
 resource "aws_db_instance" "replica" {

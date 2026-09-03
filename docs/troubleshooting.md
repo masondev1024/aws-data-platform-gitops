@@ -190,23 +190,59 @@ Could not assume role with OIDC: Not authorized to perform sts:AssumeRoleWithWeb
 
 ### 원인
 
-2026-07-15 이후 GitHub는 새로 생성되거나 이름이 변경된 저장소의 OIDC `sub` claim에 owner/repository ID를 포함하는 immutable subject 형식을 적용한다. 이름만 포함한 기존 trust condition은 새 토큰과 일치하지 않는다.
+이번 실패 run 당시 저장소 OIDC 설정은 `use_default=true`, `use_immutable_subject=false`였다. 이 저장소는 2026-04-06에 생성되어 GitHub의 immutable subject 자동 적용 대상이 아니었는데, AWS IAM role trust policy만 immutable subject 형식을 요구하고 있었다. 따라서 GitHub가 발행한 기본 `sub`와 IAM의 `StringEquals` 조건이 불일치했다.
 
-### 조치
-
-IAM trust policy를 다음 형식으로 변경했다.
+IAM이 요구한 형식은 다음과 같았다.
 
 ```text
 repo:masondev1024@269997727/aws-data-platform-gitops@1202584860:ref:refs/heads/main
 ```
 
-Terraform에도 `github_owner_id`와 `github_repo_id`를 명시해 저장소 이름 변경에 영향을 받지 않는 subject를 사용하도록 반영했다. 새 `main` 커밋에서 CD를 재실행한 결과 OIDC 인증, ECR 로그인, SHA 이미지 push, manifest validation 및 Git commit까지 모두 성공했다.
+### 조치
 
-검증 run: https://github.com/masondev1024/aws-data-platform-gitops/actions/runs/32687411862
+1. GitHub repository OIDC를 immutable subject로 명시적으로 opt-in했다.
+
+   ```bash
+   gh api --method PUT \
+     repos/masondev1024/aws-data-platform-gitops/actions/oidc/customization/sub \
+     -F use_default=false \
+     -F use_immutable_subject=true
+   ```
+
+2. 전체 EKS/NAT/RDS를 복구하지 않고 `bootstrap-terraform`으로 CD에 필요한 ECR repository, lifecycle policy, IAM role, inline policy만 재생성했다. Terraform apply 결과는 `4 added, 0 changed, 0 destroyed`였다.
+3. 실패 run `32715848652`의 failed job을 재실행했다. OIDC 인증, ECR 로그인, 이미지 build/push, production manifest validation, Git commit이 모두 성공했다.
+
+검증 job: https://github.com/masondev1024/aws-data-platform-gitops/actions/runs/32715848652/job/97429253921
+검증 결과: https://github.com/masondev1024/aws-data-platform-gitops/actions/runs/32715848652
 
 ### 운영 교훈
 
-GitHub 저장소명을 변경할 때는 URL, Argo CD `repoURL`, Terraform 변수뿐 아니라 OIDC trust policy의 subject claim도 함께 확인해야 한다. 장기적으로는 owner/repository ID 기반 claim을 사용하고, branch/environment 범위는 `StringEquals`로 최소화한다.
+GitHub 저장소명을 변경할 때는 URL, Argo CD `repoURL`, Terraform 변수뿐 아니라 OIDC customization 상태와 AWS trust policy의 subject claim을 함께 확인해야 한다. immutable subject를 사용할 경우 GitHub repository에서 opt-in한 뒤 IAM policy를 적용해야 하며, branch/environment 범위는 `StringEquals`로 최소화한다.
+
+## CD bootstrap 리소스와 workload teardown 분리
+
+### 증상
+
+전체 workload 인프라를 비용 때문에 destroy한 뒤 CD가 ECR login 이전 단계에서 실패했다. EKS, NAT, RDS는 없어도 이미지 publish는 가능하지만, CD가 사용할 ECR repository와 IAM role까지 함께 삭제된 상태였다.
+
+### 조치
+
+CD bootstrap은 다음 리소스만 별도 state로 소유한다.
+
+- GitHub Actions OIDC provider — 계정 공용 리소스
+- `data-pipeline-app` ECR repository와 lifecycle policy
+- `GitHubActionsDeployRole`과 최소 ECR push/pull inline policy
+
+Workload destroy에서는 이 bootstrap state를 대상으로 `destroy`하지 않는다. 복구 시에는 다음처럼 최소 stack만 먼저 확인·적용한다.
+
+```bash
+cd /path/to/bootstrap-terraform
+AWS_PROFILE=develope-test AWS_REGION=eu-west-1 terraform plan
+AWS_PROFILE=develope-test AWS_REGION=eu-west-1 terraform apply -auto-approve
+```
+
+복구 후에는 `terraform plan`이 `No changes`인지 확인하고, EKS/NAT/RDS를 다시 생성하지 않은 상태에서 CD를 재실행한다. 장기적으로는 bootstrap state도 로컬 파일이 아니라 별도 원격 backend에서 관리해 workload state와 소유권을 명확히 분리한다.
+
 ## 16. Ingress 필드 위치 오류
 
 ### 증상

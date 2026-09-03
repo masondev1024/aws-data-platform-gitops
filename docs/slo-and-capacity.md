@@ -1,6 +1,6 @@
 # SLO와 용량 측정 기준
 
-> 상태: 2026-08-24 실제 AWS short-lived validation을 완료했다. 아래 수치는 단일 t3.medium/RDS primary-only 검증 프로필의 증거이며 production capacity로 확대 해석하지 않는다.
+> 상태: 2026-08-24 실제 AWS short-lived validation을 완료했다. 아래 수치는 단일 t3.medium·단일 계정/리전의 검증 증거이며 production capacity로 확대 해석하지 않는다. 정상 baseline과 RDS Multi-AZ failover가 포함된 soak 결과는 서로 분리해 기록한다.
 
 ## 서비스 범위
 
@@ -30,7 +30,8 @@
 
 | 실행 ID | 모드 | 부하 | 지속시간 | p50/p95/p99 | 오류율 | HPA | DB 상태 | 판정 |
 | --- | --- | ---: | --- | --- | ---: | --- | --- | --- |
-| 미실행 | - | - | - | - | - | - | AWS 인프라 종료 | 측정 필요 |
+| 20260824-baseline | readiness | 20 req/s | 30초 | 320.1 / 354.5 / 406.5ms | 0% | 2 replicas | RDS primary | 지속 용량 하한 통과 |
+| 20260824-soak-failover | readiness | 19.94 req/s | 45분 | 318.8 / 355.49 / 634.52ms | 0.45%* | 1~2 replicas | RDS Multi-AZ failover | 장애 주입 결과 별도 기록 |
 
 실행 결과에는 테스트 대상 커밋 SHA, 이미지 SHA, 리전, replica 수, DB instance class, k6 옵션을 함께 기록한다. 그래야 용량 숫자가 환경과 분리되어 재현 불가능한 성과 지표가 되는 것을 막을 수 있다.
 
@@ -47,7 +48,7 @@ Alertmanager는 webhook URL을 Terraform 변수로 명시하지 않으면 인프
 - 테스트 계정과 상품은 전용 namespace/prefix로 격리하고 실행 후 삭제한다.
 - 운영 데이터와 실제 사용자 자격증명을 부하 테스트에 사용하지 않는다.
 - EKS/RDS/NAT/ALB를 다시 생성할 때는 최소 비용 profile과 종료 체크리스트를 먼저 적용한다.
-- 실제 readiness 처리량·p95/p99·HPA 동작·Pod/DB 장애 복구는 검증했다. RDS read replica lag, Multi-AZ failover, node-level eviction은 이번 primary-only profile에서 검증하지 않았다.
+- 실제 readiness 처리량·p95/p99·HPA 동작·Pod/DB 장애 복구와 RDS Multi-AZ failover는 검증했다. RDS read replica lag과 node-level eviction은 검증하지 않았다.
 
 ## 비용 프로필별 측정 경계
 
@@ -64,7 +65,7 @@ Alertmanager는 webhook URL을 Terraform 변수로 명시하지 않으면 인프
 
 | 항목 | 관측값 |
 |---|---:|
-| 리전/구성 | `eu-west-1`, EKS 1개 t3.medium, RDS `db.t3.micro` primary-only, ALB |
+| 리전/구성 | `eu-west-1`, EKS 1개 t3.medium, RDS `db.t3.micro` Multi-AZ failover profile, ALB |
 | 이미지 | `live-validation-20260824`, digest `sha256:fdfac508194695697019b545764478daefadeb5ade9a75129b5b537010d3484e` |
 | readiness 5 req/s, 30초 | 151/151, error 0%, p95 343.4ms |
 | readiness 20 req/s, 30초 | 601/601, error 0%, p50 320.1ms, p95 354.5ms, p99 406.5ms |
@@ -77,3 +78,5 @@ Alertmanager는 webhook URL을 Terraform 변수로 명시하지 않으면 인프
 | canary rollback | AnalysisRun Error → Degraded → stable 복귀 → Healthy |
 
 50 req/s에서 HTTP error만 보면 통과처럼 보이므로 k6 `dropped_iterations`를 함께 봤다. 이 profile에서 기록할 수 있는 capacity 하한은 readiness 기준 20 req/s이며, 응모 API의 one-shot 30 VU 결과는 sustained RPS가 아니라 쓰기 경로/정확성 검증이다.
+
+45분 soak 결과는 RDS Multi-AZ force failover를 포함한 장애 주입 실행이다. 총 53,833회 readiness 요청에서 247건(0.45%)이 failover 구간에 실패했고, p95 355.49ms·p99 634.52ms, 관측 애플리케이션 RTO 21.112초를 기록했다. 이 실패율은 정상 steady-state 오류율이 아니므로 baseline capacity 판정과 합산하지 않는다. read replica lag과 RPO row 대조는 별도 검증 범위다.

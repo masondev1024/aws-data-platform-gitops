@@ -51,8 +51,8 @@ variable "db_password" {
   sensitive   = true
 
   validation {
-    condition     = length(var.db_password) >= 16
-    error_message = "db_password must contain at least 16 characters."
+    condition     = length(var.db_password) >= 16 && length(var.db_password) <= 41
+    error_message = "db_password must contain between 16 and 41 characters (AWS RDS limit)."
   }
 }
 
@@ -69,6 +69,12 @@ variable "alertmanager_webhook_url" {
 
 variable "enable_rds_replica" {
   description = "Create the read replica only for an explicitly approved HA/replica-lag test."
+  type        = bool
+  default     = false
+}
+
+variable "enable_rds_multi_az" {
+  description = "Enable synchronous Multi-AZ standby for an explicitly approved RDS failover drill."
   type        = bool
   default     = false
 }
