@@ -85,11 +85,13 @@ GitHub OIDC Provider는 계정 단위 공유 리소스인데 애플리케이션 
 
 ## 12. 지원서의 숫자는 검증 범위와 함께 쓴다
 
-SOOP SRE Engineer 공고의 핵심은 성능·안정성 지표, 변경 안전성과 복구, 멀티리전·멀티CDN 관점이다. 현재 레플 프로젝트에서는 실제 application EKS/RDS p95·p99와 canary RTO를 아직 실행하지 않았으므로 수치를 만들어 쓰지 않는다. 대신 로컬 CI, Terraform precondition, Argo Rollouts 설정, 장애 runbook을 구현 증거로 제시하고, 로봇 프로젝트에서는 실제 단기 AWS streaming 증거와 무비용 edge failover simulation을 분리한다.
+SOOP SRE Engineer 공고의 핵심은 성능·안정성 지표, 변경 안전성과 복구, 멀티리전·멀티CDN 관점이다. 래플 프로젝트에서는 실제 application EKS/RDS p95·p99, canary rollback, Pod/DB 복구, RDS Multi-AZ failover RTO까지 short-lived 증거로 기록했다. 다만 로컬 정책 검증, 실제 AWS streaming, 실제 HLS edge, 운영하지 않은 항목을 서로 다른 증거 수준으로 분리한다.
 
 - 실제 AWS: 100Hz, 7,200 records, 실패 0, Parquet 2개, Kinesis throttle 0, destroy 41.6초
+- 실제 AWS 애플리케이션: readiness baseline 20 req/s 601/601, 45분 soak 53,833회, RDS Multi-AZ failover application RTO 21.112초, canary stable 100% 복귀
 - 로컬 결정론 lab: 3,600 requests, 2초 failover RTO, failover 후 추가 실패 0, `cdn-a → cdn-b`
-- 미검증: 실제 멀티리전 CDN, 라이브 미디어 segment/rebuffering, application HTTP p95/p99, RDS replica lag
+- 실제 미디어 Lab: private S3 2개·CloudFront 2개·Cloudflare Worker VOD failover, playlist/segment 5/5, failover p95 241.46ms
+- 미검증: 라이브 미디어 ingest/rebuffering/DRM, RDS replica lag, 24시간 운영 SLA
 
 면접에서는 “운영했다”와 “정책을 구현·검증했다”를 구분해야 신뢰성을 잃지 않는다.
 
@@ -102,7 +104,7 @@ ECR repository가 Terraform state에 있어도 이미지가 하나라도 남아 
 애플리케이션이 정상 동작한 것만으로 실험을 완료하지 않는다. Terraform destroy 결과, EKS/RDS/ALB/Kinesis/Firehose/ECR/S3/Secrets Manager/VPC/NAT/EIP 잔여, state resource count, Cost Explorer `Estimated` 상태를 함께 기록해야 한다. 이번 검증은 두 stack의 state를 각각 0개로 수렴시키고 AWS 전용 리소스가 absent인지 확인한 뒤 종료했다.
 ## 13. 실제 부하에서는 “오류율 0%”만 보면 안 된다
 
-readiness 50 req/s에서 HTTP error는 0%였지만 k6 arrival iteration 20개가 drop됐다. 요청이 서버에 도착하지 못한 포화도 신호이므로, capacity report에는 `http_req_failed`와 `dropped_iterations`를 함께 기록해야 한다. 현재 검증에서 20 req/s는 30초 동안 p95 354.5ms/p99 406.5ms로 통과했고, 50 req/s는 지속 가능 용량으로 인정하지 않았다.
+readiness 50 req/s에서 HTTP error는 0%였지만 k6 arrival iteration 20개가 drop됐다. 요청이 서버에 도착하지 못한 포화도 신호이므로, capacity report에는 `http_req_failed`와 `dropped_iterations`를 함께 기록해야 한다. 정상 baseline에서 20 req/s는 30초 동안 p95 354.5ms/p99 406.5ms로 통과했고, 45분 soak은 RDS failover 구간을 별도 주입해 53,833회와 application RTO 21.112초를 남겼다. 50 req/s는 지속 가능 용량으로 인정하지 않았다.
 
 ## 14. HPA 설정은 노드와 함께 설계해야 한다
 

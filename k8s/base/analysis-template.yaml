@@ -19,9 +19,25 @@ spec:
         prometheus:
           address: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
           query: >-
-            sum(rate(raffle_http_requests_total{service="{{args.service-name}}",status=~"5.."}[2m]))
+            (sum(rate(raffle_http_requests_total{service="{{args.service-name}}",status=~"5.."}[5m])) or vector(0))
             /
-            sum(rate(raffle_http_requests_total{service="{{args.service-name}}"}[2m]))
+            clamp_min(sum(rate(raffle_http_requests_total{service="{{args.service-name}}"}[5m])), 1)
+    - name: canary-apply-samples
+      # A latency percentile is undefined when no apply request has reached
+      # the canary. Fail closed on missing samples instead of allowing
+      # result[0] to raise a runtime slice-index error.
+      initialDelay: 30s
+      interval: 30s
+      count: 3
+      failureLimit: 1
+      inconclusiveLimit: 1
+      successCondition: result[0] > 0
+      provider:
+        prometheus:
+          address: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+          query: >-
+            sum(increase(raffle_http_requests_total{service="{{args.service-name}}",route="/api/apply"}[5m]))
+            or vector(0)
     - name: canary-apply-p95
       initialDelay: 30s
       interval: 30s
@@ -36,6 +52,7 @@ spec:
             histogram_quantile(
               0.95,
               sum by (le) (
-                rate(raffle_http_request_duration_seconds_bucket{service="{{args.service-name}}",route="/api/apply"}[2m])
+                rate(raffle_http_request_duration_seconds_bucket{service="{{args.service-name}}",route="/api/apply"}[5m])
               )
             )
+            or vector(0)
