@@ -14,7 +14,7 @@ Terraform으로 AWS 데이터 플랫폼 인프라를 관리하고 GitHub Actions
 
 애플리케이션에는 `/healthz`와 DB 연결을 검증하는 `/readyz`를 분리해 장애 격리와 트래픽 제어를 고려했고, 이미지에는 commit SHA 태그를 사용해 배포 재현성을 높였습니다. CI에서는 애플리케이션 테스트, Docker build, Kustomize render, Terraform validation을 자동 검증합니다.
 
-추가 검증에서는 전체 104개 리소스 구성을 14개 streaming validation profile로 축소해 Kinesis → Firehose → S3 Parquet 경로를 7,200건 전송으로 확인했습니다. 별도 short-lived EKS/RDS profile에서는 readiness 20 req/s를 30초 동안 601/601 성공(p95 354.5ms, p99 406.5ms), one-shot 응모 30 VU 90/90 성공, HPA·Argo rollback·Pod/DB 복구를 실제로 검증했습니다. 3-region/2-CDN 장애 전환 정책은 AWS CDN 비용 없이 로컬에서 구현해 2초 failover RTO와 전환 후 추가 실패 0건을 재현했습니다. 실제 멀티리전 CDN·라이브 미디어 운영과 RDS replica lag은 별도 미검증으로 명확히 구분합니다.
+추가 검증에서는 전체 104개 리소스 구성을 14개 streaming validation profile로 축소해 Kinesis → Firehose → S3 Parquet 경로를 7,200건 전송으로 확인했습니다. 별도 short-lived EKS/RDS profile에서는 readiness 20 req/s를 30초 동안 601/601 성공(p95 354.5ms, p99 406.5ms), 45분 soak 53,833회, RDS Multi-AZ failover application RTO 21.112초, one-shot 응모 30 VU 90/90 성공, HPA·Argo rollback·Pod/DB 복구를 실제로 검증했습니다. HLS VOD는 private S3·CloudFront 2개와 Cloudflare Worker를 실제로 연결해 primary 장애 시 secondary 전환과 playlist/segment 5/5를 확인했고, 3-region/2-CDN 정책은 AWS CDN 비용 없이 별도 로컬 lab으로 구현했습니다. 라이브 미디어 운영, rebuffering·DRM, RDS replica lag은 별도 미검증으로 명확히 구분합니다.
 
 ## GitHub Topics 초안
 

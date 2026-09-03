@@ -58,7 +58,7 @@ cd terraform
 terraform plan -var='allow_full_stack_apply=true'
 ```
 
-테스트 비용을 줄이기 위해 기본값은 EKS worker 1대(`t3.medium`), NAT Gateway 1개, RDS primary만 사용하도록 조정했습니다. 고가용성 검증이 필요한 경우에만 `enable_multi_az_nat=true`, `enable_rds_replica=true`, node 수 증가를 별도로 선택합니다. 전체 선택 근거와 실제 측정값은 [`docs/data-engineering-decisions.md`](docs/data-engineering-decisions.md), [`docs/lessons-learned.md`](docs/lessons-learned.md), [`docs/failure-drills.md`](docs/failure-drills.md)에 기록합니다.
+테스트 비용을 줄이기 위해 기본값은 EKS worker 1대(`t3.medium`), NAT Gateway 1개, RDS primary-only·Single-AZ로 조정했습니다. 고가용성 검증이 필요한 경우에만 `enable_multi_az_nat=true`, `enable_rds_replica=true`, `enable_rds_multi_az=true`, node 수 증가를 별도로 선택합니다. RDS Multi-AZ는 동기 standby와 failover drill을 위한 명시적 비용 선택이며, 전체 선택 근거와 실제 측정값은 [`docs/data-engineering-decisions.md`](docs/data-engineering-decisions.md), [`docs/lessons-learned.md`](docs/lessons-learned.md), [`docs/failure-drills.md`](docs/failure-drills.md)에 기록합니다.
 
 ## 배포 전 조건
 

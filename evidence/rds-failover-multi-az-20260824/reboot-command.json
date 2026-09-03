@@ -1,0 +1,98 @@
+{
+    "DBInstance": {
+        "DBInstanceIdentifier": "data-pipeline-primary",
+        "DBInstanceClass": "db.t3.micro",
+        "Engine": "mysql",
+        "DBInstanceStatus": "rebooting",
+        "MasterUsername": "admin",
+        "Endpoint": {
+            "Address": "data-pipeline-primary.crwoo4y6y0tl.eu-west-1.rds.amazonaws.com",
+            "Port": 3306,
+            "HostedZoneId": "Z29XKXDKYMONMX"
+        },
+        "AllocatedStorage": 20,
+        "InstanceCreateTime": "2026-08-24T13:33:36.278000+00:00",
+        "PreferredBackupWindow": "00:22-00:52",
+        "BackupRetentionPeriod": 1,
+        "DBSecurityGroups": [],
+        "VpcSecurityGroups": [
+            {
+                "VpcSecurityGroupId": "sg-0251e11c404fedbab",
+                "Status": "active"
+            }
+        ],
+        "DBParameterGroups": [
+            {
+                "DBParameterGroupName": "default.mysql8.0",
+                "ParameterApplyStatus": "in-sync"
+            }
+        ],
+        "AvailabilityZone": "eu-west-1a",
+        "DBSubnetGroup": {
+            "DBSubnetGroupName": "data-pipeline-db-subnet-group",
+            "DBSubnetGroupDescription": "Managed by Terraform",
+            "VpcId": "vpc-0f28a7ac558c82618",
+            "SubnetGroupStatus": "Complete",
+            "Subnets": [
+                {
+                    "SubnetIdentifier": "subnet-0618a18f48c2da262",
+                    "SubnetAvailabilityZone": {
+                        "Name": "eu-west-1a"
+                    },
+                    "SubnetOutpost": {},
+                    "SubnetStatus": "Active"
+                },
+                {
+                    "SubnetIdentifier": "subnet-094eddf723a4d509b",
+                    "SubnetAvailabilityZone": {
+                        "Name": "eu-west-1b"
+                    },
+                    "SubnetOutpost": {},
+                    "SubnetStatus": "Active"
+                }
+            ]
+        },
+        "PreferredMaintenanceWindow": "thu:03:10-thu:03:40",
+        "UpgradeRolloutOrder": "second",
+        "PendingModifiedValues": {},
+        "LatestRestorableTime": "2026-08-24T13:56:28+00:00",
+        "MultiAZ": true,
+        "EngineVersion": "8.0.46",
+        "AutoMinorVersionUpgrade": true,
+        "ReadReplicaDBInstanceIdentifiers": [],
+        "LicenseModel": "general-public-license",
+        "StorageThroughput": 0,
+        "OptionGroupMemberships": [
+            {
+                "OptionGroupName": "default:mysql-8-0",
+                "Status": "in-sync"
+            }
+        ],
+        "SecondaryAvailabilityZone": "eu-west-1b",
+        "PubliclyAccessible": false,
+        "StorageType": "gp2",
+        "DbInstancePort": 0,
+        "StorageEncrypted": false,
+        "DbiResourceId": "db-GSPH7K2INKICQW4JBTVFM2KDDM",
+        "CACertificateIdentifier": "rds-ca-rsa2048-g1",
+        "DomainMemberships": [],
+        "CopyTagsToSnapshot": false,
+        "MonitoringInterval": 0,
+        "DBInstanceArn": "arn:aws:rds:eu-west-1:854745312525:db:data-pipeline-primary",
+        "IAMDatabaseAuthenticationEnabled": false,
+        "DatabaseInsightsMode": "standard",
+        "PerformanceInsightsEnabled": false,
+        "DeletionProtection": false,
+        "AssociatedRoles": [],
+        "TagList": [],
+        "CustomerOwnedIpEnabled": false,
+        "NetworkType": "IPV4",
+        "BackupTarget": "region",
+        "CertificateDetails": {
+            "CAIdentifier": "rds-ca-rsa2048-g1",
+            "ValidTill": "2027-08-24T13:32:07+00:00"
+        },
+        "DedicatedLogVolume": false,
+        "EngineLifecycleSupport": "open-source-rds-extended-support"
+    }
+}

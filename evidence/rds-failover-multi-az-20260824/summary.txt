@@ -1,0 +1,7 @@
+instance=data-pipeline-primary
+endpoint=data-pipeline-primary.crwoo4y6y0tl.eu-west-1.rds.amazonaws.com
+final_status=rebooting	True	data-pipeline-primary.crwoo4y6y0tl.eu-west-1.rds.amazonaws.com
+first_failure_ms=19094
+recovery_after_command_ms=40206
+observed_application_rto_ms=21112
+csv=/Users/mason/Documents/Codex/2026-08-24/https-github-com-masondev1024-develope-project/work/develope-project/evidence/rds-failover-multi-az-20260824/probes.csv
