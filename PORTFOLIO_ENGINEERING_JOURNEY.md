@@ -371,6 +371,16 @@ Diverging branches can't be fast-forwarded
 
 reset이나 force push로 어느 쪽 이력을 지우지 않고, main의 bot manifest commit과 feature의 runtime/docs commit을 모두 보존하는 no-ff merge를 선택한다. 자동화 bot이 main에 commit하는 GitOps 전략에서는 release 직전에 origin/main을 fetch하고 branch divergence를 확인해야 한다.
 
+### INC-09. distroless entrypoint와 Security smoke test의 불일치
+
+distroless runtime image의 entrypoint는 Python interpreter다. 기존 Security workflow는 slim 이미지처럼 docker run 뒤에 python -c를 붙였고, distroless에서는 python을 script filename으로 해석해 다음 오류가 발생했다.
+
+~~~text
+/usr/bin/python3.13: can't open file '/app/python'
+~~~
+
+이미지 취약점 gate가 실패한 것이 아니라 smoke assertion의 실행 계약이 실패한 것이므로, workflow를 docker run image -c로 수정했다. distroless를 선택할 때는 shell 명령뿐 아니라 debug command, package inspection, security assertion까지 image entrypoint 계약에 맞춰야 한다.
+
 ## 5. 이전 운영 검증에서 누적된 장애 패턴
 
 이번 release path 이전에도 저장소의 CI, Kubernetes, Terraform, AWS streaming, Rollout을 실제로 검증하면서 다음 문제를 겪었다. 이 항목들은 현재 설계의 배경이며, 기존 상세 로그는 docs/troubleshooting.md와 docs/lessons-learned.md에 남겨 두었다.

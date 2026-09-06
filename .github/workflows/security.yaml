@@ -82,7 +82,7 @@ jobs:
       - name: Verify ignored base SBOM packages are absent at runtime
         run: >-
           docker run --rm data-pipeline-app:security
-          python -c "import importlib.util; assert importlib.util.find_spec('msgpack') is None; assert importlib.util.find_spec('setuptools') is None"
+          -c "import importlib.util; assert importlib.util.find_spec('msgpack') is None; assert importlib.util.find_spec('setuptools') is None"
 
   dast-baseline:
     name: Optional OWASP ZAP baseline
