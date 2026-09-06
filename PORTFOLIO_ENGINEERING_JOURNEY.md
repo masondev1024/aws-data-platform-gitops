@@ -480,12 +480,25 @@ ECR repository가 Terraform state에 있어도 image manifest가 남아 있으�
 
 ### GitHub Actions evidence
 
-최종 trixie release path에서 다음 workflow가 모두 성공했다.
+최종 distroless release path에서 다음 workflow가 성공했다. 최초 Security run은 distroless entrypoint 가정 때문에 실패했지만, workflow를 수정한 뒤 재실행은 성공했다.
 
-- [CI 34040327473](https://github.com/masondev1024/aws-data-platform-gitops/actions/runs/34040327473)
-- [Security 34040327623](https://github.com/masondev1024/aws-data-platform-gitops/actions/runs/34040327623)
-- [CodeQL 34040327462](https://github.com/masondev1024/aws-data-platform-gitops/actions/runs/34040327462)
-- [CD 34040327553](https://github.com/masondev1024/aws-data-platform-gitops/actions/runs/34040327553)
+- [CI 34041614935](https://github.com/masondev1024/aws-data-platform-gitops/actions/runs/34041614935)
+- [Security 재실행 34041614918](https://github.com/masondev1024/aws-data-platform-gitops/actions/runs/34041614918)
+- [CodeQL 34041448415](https://github.com/masondev1024/aws-data-platform-gitops/actions/runs/34041448415)
+- [CD 34041448347](https://github.com/masondev1024/aws-data-platform-gitops/actions/runs/34041448347)
+
+최종 release evidence도 source revision, GitOps revision, image digest와 SBOM hash를 대조해 확인했다.
+
+| 항목 | 최종 값 |
+| --- | --- |
+| application source revision | 8d778173bf788ee856fea8019a33cc87754900a5 |
+| latest main revision | ac5b89c |
+| GitOps manifest revision | a43f122eb4ff6d57f39ecef502147e4b186d40c1 |
+| production image digest | sha256:85b856cb5dba352e093b1026bd35fec6badf22d25bc20bb76cfbb916ec4d5a03 |
+| SPDX SBOM SHA-256 | e911535b5bbad151d67ccb5975919caa53aec93000d0fadf212dfda43fce93f8 |
+| ECR Basic Scan | COMPLETE, CRITICAL 0 / HIGH 0 / MEDIUM 0 / LOW 0 |
+
+latest main의 ac5b89c는 애플리케이션 코드가 아닌 distroless Security smoke contract 수정이므로, production manifest는 이미 CD가 검증한 8d77817 image digest를 계속 가리킨다.
 
 CD에서 확인한 단계는 다음과 같다.
 
@@ -513,20 +526,20 @@ CD에서 확인한 단계는 다음과 같다.
 
 로컬 validation container는 smoke test 후 제거했다. AWS bootstrap 리소스를 더 이상 사용하지 않을 때는 ECR image, ECR repository와 IAM role을 명시적으로 정리하고, 삭제 전 GitHub Actions variable과 workflow 의존성을 확인한다.
 
-## 7. 현재 남은 리스크와 다음 검증
+## 7. 릴리즈 완료 상태와 다음 단계
 
-### 반드시 확인할 것
+### 완료한 검증
 
-1. distroless commit 839311d를 feature와 main에 push한다.
-2. CD가 새 image SHA tag를 ECR에 push하는지 확인한다.
-3. 새 digest의 ECR Basic Scan이 COMPLETE가 될 때까지 기다린다.
-4. ECR native CRITICAL/HIGH/MEDIUM/LOW 수치를 기록한다.
-5. GitOps bot commit으로 production kustomization이 새 image SHA를 가리키는지 확인한다.
+- distroless runtime commit을 feature와 main에 반영했다.
+- CD가 immutable image tag와 digest를 ECR에 push했다.
+- ECR Basic Scan이 COMPLETE가 되었고 모든 severity가 0건이었다.
+- GitOps bot commit이 production kustomization을 새 image SHA로 갱신했다.
+- Security smoke test를 distroless entrypoint에 맞춰 수정하고 재실행에 성공했다.
 
-### 남은 설계 과제
+### 남은 설계 과제와 운영 리스크
 
-- ECR Basic Scan의 vendor-unfixed CVE를 base image release cadence와 연결한다.
 - ECR native scan 결과를 release evidence JSON에 자동 포함한다.
+- base image digest 갱신 cadence와 ECR scan 재검증을 정기화한다.
 - full EKS validation profile을 짧은 시간으로 띄워 Argo CD/Rollouts parity gate를 실제 cluster에서 실행한다.
 - Kafka relay의 consumer lag, duplicate rate, DLQ rate를 canary evidence와 연결한다.
 - S3 Parquet/Iceberg의 schema evolution, partition pruning, compaction과 backfill runbook을 연결한다.
