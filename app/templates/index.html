@@ -3,25 +3,30 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ASACDE RAFFLE</title>
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>ASACDE Raffle</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
         body { font-family: 'Inter', sans-serif; background-color: #ffffff; }
         .hero-bg { background-color: #242c38; }
     </style>
+    <script src="{{ url_for('static', filename='raffle.js') }}" defer></script>
 </head>
 <body>
     <nav class="flex justify-between items-center px-8 py-4 border-b border-gray-100 sticky top-0 bg-white z-50">
         <div class="text-2xl font-black tracking-tighter italic">ASACDE 1ST RAFFLE</div>
         <div class="space-x-6 text-sm font-medium text-gray-600">
-            <a href="/" class="hover:text-black">HOME</a>
+            <a href="{{ url_for('index') }}" class="hover:text-black">HOME</a>
             {% if is_logged_in %}
-                <a href="/mypage" class="hover:text-black">MYPAGE</a>
-                <a href="/api/logout" class="text-red-500">LOGOUT</a>
+                <a href="{{ url_for('mypage') }}" class="hover:text-black">MYPAGE</a>
+                <form action="{{ url_for('api_logout') }}" method="post" class="inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="text-red-500">LOGOUT</button>
+                </form>
             {% else %}
-                <a href="/login" class="hover:text-black">LOGIN</a>
-                <a href="/signup" class="hover:text-black">SIGNUP</a>
+                <a href="{{ url_for('login_page') }}" class="hover:text-black">LOGIN</a>
+                <a href="{{ url_for('signup_page') }}" class="hover:text-black">SIGNUP</a>
             {% endif %}
         </div>
     </nav>
@@ -32,7 +37,7 @@
             <p class="text-lg opacity-80">04.01 - 04.30 LIMITED EDITION</p>
         </div>
         <div class="w-1/3 z-10">
-            <img src="https://images.unsplash.com/photo-1595950653106-6c9ebd614d3a?w=800&q=80" class="drop-shadow-2xl rotate-12 hover:rotate-0 transition-transform duration-500">
+            <img src="https://images.unsplash.com/photo-1595950653106-6c9ebd614d3a?w=800&q=80" alt="Featured raffle item" class="drop-shadow-2xl rotate-12 hover:rotate-0 transition-transform duration-500">
         </div>
         <div class="absolute right-0 top-0 w-1/2 h-full bg-gradient-to-l from-blue-900/20 to-transparent"></div>
     </div>
@@ -43,49 +48,18 @@
             {% for item in items %}
             <div class="group cursor-pointer">
                 <div class="relative bg-gray-100 rounded-xl overflow-hidden aspect-square mb-4">
-                    <img src="{{ item.image_url }}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
+                    <img src="{{ item.image_url }}" alt="{{ item.title }}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500">
                     <div class="absolute top-4 left-4 bg-black text-white text-[10px] px-2 py-1 font-bold">DRAW</div>
                 </div>
                 <h3 class="font-bold text-lg mb-1 truncate">{{ item.title }}</h3>
                 <p class="text-gray-500 text-sm mb-3 line-clamp-1">{{ item.description }}</p>
                 <div class="timer text-red-500 font-bold text-sm mb-4" data-endtime="{{ item.end_time }}">--:--:--:--</div>
-                <button onclick="applyRaffle({{ item.id }})" class="w-full py-3 bg-white border border-gray-200 rounded-lg font-bold text-sm hover:bg-black hover:text-white transition-colors">
+                <button type="button" data-item-id="{{ item.id }}" class="apply-button w-full py-3 bg-white border border-gray-200 rounded-lg font-bold text-sm hover:bg-black hover:text-white transition-colors">
                     응모하기
                 </button>
             </div>
             {% endfor %}
         </div>
     </div>
-
-    <script>
-        // 타이머 및 응모 로직은 기존과 동일 (CSS 클래스만 깔끔하게 유지)
-        setInterval(() => {
-            document.querySelectorAll('.timer').forEach(el => {
-                const end = new Date(el.getAttribute('data-endtime')).getTime();
-                const now = new Date().getTime();
-                const distance = end - now;
-                if (distance < 0) { el.innerHTML = "CLOSED"; return; }
-                const d = Math.floor(distance / (86400000));
-                const h = Math.floor((distance % 86400000) / 3600000);
-                const m = Math.floor((distance % 3600000) / 60000);
-                const s = Math.floor((distance % 60000) / 1000);
-                el.innerHTML = `${d}D ${h}H ${m}M ${s}S LEFT`;
-            });
-        }, 1000);
-
-        async function applyRaffle(itemId) {
-            const res = await fetch('/api/apply', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({item_id: itemId})
-            });
-            if (res.status === 401) {
-                if(confirm("로그인 후 응모 가능합니다. 로그인 하시겠습니까?")) window.location.href = '/login';
-            } else {
-                const data = await res.json();
-                alert(data.message);
-            }
-        }
-    </script>
 </body>
 </html>

@@ -1,0 +1,14 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: data-pipeline-rollout
+spec:
+  template:
+    spec:
+      containers:
+        - name: app-container
+          env:
+            - name: DEPLOYMENT_TIER
+              value: validation
+            - name: ALLOW_FAILURE_DRILL
+              value: "false"

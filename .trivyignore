@@ -1,0 +1,6 @@
+# The official multi-arch Python slim base publishes stale SBOM entries for
+# packages that are not present in the final filesystem. Keep these exceptions
+# time-bounded and pair them with the runtime absence check in security.yaml.
+# Re-audit after the expiration date or when the base image digest changes.
+GHSA-6v7p-g79w-8964 exp:2027-09-06
+CVE-2025-47273 exp:2027-09-06

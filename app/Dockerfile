@@ -1,20 +1,25 @@
-# 1. 파이썬 실행 환경 선택 (가벼운 버전인 alpine이나 slim 추천)
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm@sha256:782412e85d0f0984994c290652577d4018aff08145c85b262bb63dc0c7522254
 
-# 2. 컨테이너 내부 작업 디렉토리 설정
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
 WORKDIR /app
 
-# 3. 필요한 라이브러리 설치 파일 복사 (requirements.txt가 있다면)
-# 없다면 이 단계는 생략해도 되지만, 보통 아래처럼 작성해.
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN groupadd --gid 10001 app \
+    && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin app
 
-# 4. 내 소스 코드와 템플릿 폴더 복사
-# k8s 폴더는 복사하지 않도록 명시적으로 필요한 것만 골라 담자.
-COPY app.py .
-COPY draw_winner.py .
-COPY templates/ ./templates/
+COPY requirements.txt ./
+RUN python -m pip install --upgrade pip==26.2.1 \
+    && python -m pip install --requirement requirements.txt
 
-# 5. Flask 서버 실행 (8080 포트 사용 가정)
+COPY --chown=10001:10001 app.py draw_winner.py migrate.py schema.py ./
+COPY --chown=10001:10001 templates/ ./templates/
+COPY --chown=10001:10001 static/ ./static/
+
+USER 10001:10001
 EXPOSE 8080
-CMD ["python", "app.py"]
+
+# Keep one Prometheus registry per pod. Scale horizontally with Rollout/HPA
+# rather than using Gunicorn workers that would expose split counter state.
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "4", "--worker-tmp-dir", "/dev/shm", "--timeout", "30", "--access-logfile", "-", "--error-logfile", "-", "app:app"]

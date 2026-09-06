@@ -7,6 +7,7 @@ on:
       - "app/**"
       - "k8s/**"
       - "loadtest/**"
+      - "scripts/**"
       - "terraform/**"
       - "docs/**"
       - ".github/workflows/**"
@@ -16,6 +17,7 @@ on:
       - "app/**"
       - "k8s/**"
       - "loadtest/**"
+      - "scripts/**"
       - "terraform/**"
       - "docs/**"
       - ".github/workflows/**"
@@ -40,7 +42,7 @@ jobs:
         run: python -m pip install -r app/requirements-dev.txt
 
       - name: Run tests
-        run: python -m pytest -q app/tests
+        run: python -m pytest -q app/tests scripts/tests
 
   docker-build:
     name: Docker build
@@ -58,8 +60,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: Render production overlay
         run: kubectl kustomize k8s/overlays/prod > /tmp/rendered-manifests.yaml
+      - name: Render validation overlay
+        run: kubectl kustomize k8s/overlays/validation > /tmp/rendered-validation-manifests.yaml
       - name: Ensure the rendered manifest is non-empty
         run: test -s /tmp/rendered-manifests.yaml
+      - name: Assert D2C release controls are rendered
+        run: |
+          rg --fixed-strings "data-pipeline-schema-migration" /tmp/rendered-manifests.yaml
+          rg --fixed-strings "canary-apply-outbox-parity" /tmp/rendered-manifests.yaml
+          rg --fixed-strings "ALLOW_FAILURE_DRILL" k8s/overlays/validation/patch-rollout.yaml
+          rg --fixed-strings "value: validation" /tmp/rendered-validation-manifests.yaml
 
   loadtest-script:
     name: k6 load-test script validation

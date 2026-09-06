@@ -15,10 +15,12 @@ resource "aws_internet_gateway" "igw" {
 }
 
 resource "aws_subnet" "public_a" {
-  vpc_id                  = aws_vpc.main.id
-  cidr_block              = cidrsubnet(var.vpc_cidr, 8, 0)
-  availability_zone       = data.aws_availability_zones.available.names[0]
-  map_public_ip_on_launch = true
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = cidrsubnet(var.vpc_cidr, 8, 0)
+  availability_zone = data.aws_availability_zones.available.names[0]
+  # Public subnets host the internet-facing ALB/NAT gateways, not arbitrary
+  # public EC2 addresses.
+  map_public_ip_on_launch = false
   tags = { Name = "sbn-pub-a"
     "kubernetes.io/role/elb" = "1"
   }
@@ -28,7 +30,7 @@ resource "aws_subnet" "public_b" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = cidrsubnet(var.vpc_cidr, 8, 1)
   availability_zone       = data.aws_availability_zones.available.names[1]
-  map_public_ip_on_launch = true
+  map_public_ip_on_launch = false
   tags = { Name = "sbn-pub-b"
   "kubernetes.io/role/elb" = "1" }
 }

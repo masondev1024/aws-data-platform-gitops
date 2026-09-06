@@ -38,6 +38,23 @@ spec:
           query: >-
             sum(increase(raffle_http_requests_total{service="{{args.service-name}}",route="/api/apply"}[5m]))
             or vector(0)
+    - name: canary-apply-outbox-parity
+      # Read the invariant from the writer database. App-side success and
+      # persisted-event counters are intentionally not used as the source of
+      # truth because both counters can be incremented by the same code path.
+      # -1 means the measurement failed and therefore fails closed.
+      initialDelay: 30s
+      interval: 30s
+      count: 3
+      failureLimit: 0
+      inconclusiveLimit: 1
+      successCondition: result[0] == 0
+      provider:
+        prometheus:
+          address: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+          query: >-
+            min(raffle_apply_outbox_parity_gap{service="{{args.service-name}}"})
+            or vector(-1)
     - name: canary-apply-p95
       initialDelay: 30s
       interval: 30s

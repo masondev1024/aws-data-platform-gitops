@@ -5,12 +5,15 @@ on:
     branches: [main]
     paths:
       - "app/**"
+      - "scripts/write_release_evidence.py"
       - ".github/workflows/cd.yaml"
   workflow_dispatch:
 
 permissions:
-  id-token: write
   contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
 
 concurrency:
   group: production-image-publish
@@ -22,10 +25,12 @@ env:
 
 jobs:
   publish:
-    name: Publish image and update GitOps manifest
+    name: Publish verified image and update GitOps manifest
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Verify deployment configuration
         env:
@@ -46,13 +51,57 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push image
+      - name: Build or reuse an immutable source image
+        id: image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build --pull --tag "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" ./app
-          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          set -euo pipefail
+          image_uri="$ECR_REGISTRY/$ECR_REPOSITORY"
+          image_digest="$(aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageTag="$IMAGE_TAG" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text 2>/dev/null || true)"
+
+          if [ -z "$image_digest" ] || [ "$image_digest" = "None" ]; then
+            docker build --pull --tag "$image_uri:$IMAGE_TAG" ./app
+            docker push "$image_uri:$IMAGE_TAG"
+            image_digest="$(aws ecr describe-images \
+              --repository-name "$ECR_REPOSITORY" \
+              --image-ids imageTag="$IMAGE_TAG" \
+              --query 'imageDetails[0].imageDigest' \
+              --output text)"
+          else
+            docker pull "$image_uri@$image_digest"
+            docker tag "$image_uri@$image_digest" "$image_uri:$IMAGE_TAG"
+          fi
+
+          test "$image_digest" != "None"
+          test -n "$image_digest"
+          printf 'uri=%s\n' "$image_uri" >> "$GITHUB_OUTPUT"
+          printf 'digest=%s\n' "$image_digest" >> "$GITHUB_OUTPUT"
+          printf 'reference=%s@%s\n' "$image_uri" "$image_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@e07451d2e059ed86c2870430ea286b3a9e0bf241
+        with:
+          version: v0.72.0
+          cache: true
+
+      - name: Enforce the production image vulnerability policy
+        run: >-
+          trivy image --ignorefile .trivyignore --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL
+          --scanners vuln "${{ steps.image.outputs.reference }}"
+
+      - name: Generate an SPDX SBOM for the published digest
+        uses: anchore/sbom-action@v0.24.0
+        with:
+          image: ${{ steps.image.outputs.reference }}
+          format: spdx-json
+          output-file: release/data-pipeline-app.sbom.spdx.json
+          artifact-name: data-pipeline-app-sbom
 
       - name: Update production manifest
         env:
@@ -84,16 +133,50 @@ jobs:
       - name: Validate updated production manifest
         run: kubectl kustomize k8s/overlays/prod > /tmp/rendered-production.yaml
 
-      - name: Commit manifest change
+      - name: Commit immutable GitOps image reference
+        id: gitops
         env:
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          if git diff --quiet -- k8s/overlays/prod/kustomization.yaml; then
-            echo "The manifest already references $IMAGE_TAG."
-            exit 0
+          set -euo pipefail
+          if ! git diff --quiet -- k8s/overlays/prod/kustomization.yaml; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -- k8s/overlays/prod/kustomization.yaml
+            git commit -m "chore(deploy): update image to $IMAGE_TAG [skip ci]"
+            git push origin HEAD:main
           fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- k8s/overlays/prod/kustomization.yaml
-          git commit -m "chore(deploy): update image to $IMAGE_TAG [skip ci]"
-          git push origin HEAD:main
+          printf 'revision=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release evidence
+        run: >-
+          python scripts/write_release_evidence.py
+          --source-revision "${{ github.sha }}"
+          --gitops-revision "${{ steps.gitops.outputs.revision }}"
+          --image-name "${{ steps.image.outputs.uri }}"
+          --image-digest "${{ steps.image.outputs.digest }}"
+          --sbom-path release/data-pipeline-app.sbom.spdx.json
+          --manifest-path k8s/overlays/prod/kustomization.yaml
+          --output release/release-evidence.json
+
+      - name: Attest image SBOM
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ steps.image.outputs.uri }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          sbom-path: release/data-pipeline-app.sbom.spdx.json
+          push-to-registry: false
+          create-storage-record: false
+
+      - name: Attest release evidence provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: release/release-evidence.json
+
+      - name: Upload release evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-evidence-${{ github.sha }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 90

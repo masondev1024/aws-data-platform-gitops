@@ -3,6 +3,18 @@ resource "aws_s3_bucket" "data_lake" {
   bucket = "data-pipeline-lake-${random_string.suffix.result}"
 }
 
+resource "aws_s3_bucket_server_side_encryption_configuration" "data_lake" {
+  bucket = aws_s3_bucket.data_lake.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      kms_master_key_id = aws_kms_key.platform.arn
+      sse_algorithm     = "aws:kms"
+    }
+    bucket_key_enabled = true
+  }
+}
+
 # 퍼블릭 접근 원천 차단
 resource "aws_s3_bucket_public_access_block" "data_lake_block" {
   bucket                  = aws_s3_bucket.data_lake.id

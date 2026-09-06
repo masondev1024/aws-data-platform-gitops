@@ -37,12 +37,27 @@ spec:
       labels:
         app: data-pipeline-app
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: app-container
           image: data-pipeline-app:latest
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           env:
             - name: FLASK_ENV
+              value: production
+            - name: DEPLOYMENT_TIER
               value: production
           ports:
             - containerPort: 8080

@@ -52,11 +52,21 @@ resource "aws_eks_cluster" "main" {
     bootstrap_cluster_creator_admin_permissions = true
   }
 
+  encryption_config {
+    provider {
+      key_arn = aws_kms_key.platform.arn
+    }
+    resources = ["secrets"]
+  }
+
   vpc_config {
     subnet_ids = [
       aws_subnet.app_private_a.id, aws_subnet.app_private_b.id,
       aws_subnet.public_a.id, aws_subnet.public_b.id
     ]
+    endpoint_private_access = true
+    endpoint_public_access  = var.cluster_endpoint_public_access
+    public_access_cidrs     = var.cluster_api_allowed_cidrs
   }
   depends_on = [aws_iam_role_policy_attachment.eks_cluster_policy]
 }

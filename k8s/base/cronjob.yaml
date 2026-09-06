@@ -3,21 +3,34 @@ kind: CronJob
 metadata:
   name: raffle-draw-job
 spec:
-  schedule: "* * * * *" # 매 1분마다 실행
+  schedule: "* * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
+      backoffLimit: 2
       template:
         spec:
-          containers:
-          - name: draw-worker
-            image: data-pipeline-app:latest
-            command: ["python", "draw_winner.py"]
-            envFrom:
-            - configMapRef:
-                name: raffle-config
-            - secretRef:
-                name: raffle-secret
+          automountServiceAccountToken: false
           restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: draw-worker
+              image: data-pipeline-app:latest
+              command: ["python", "draw_winner.py"]
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              envFrom:
+                - configMapRef:
+                    name: raffle-config
+                - secretRef:
+                    name: raffle-secret

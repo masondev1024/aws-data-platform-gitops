@@ -75,6 +75,30 @@ data:
           "datasource": {"type": "prometheus", "uid": "prometheus"},
           "gridPos": {"h": 8, "w": 6, "x": 18, "y": 8},
           "targets": [{"expr": "sum by (result) (max by (pod, result) (rate(raffle_apply_requests_total[5m])))", "legendFormat": "{{result}}", "refId": "A"}]
+        },
+        {
+          "id": 6,
+          "type": "stat",
+          "title": "D2C apply / outbox parity gap",
+          "description": "A non-zero value means a recent raffle entry has no matching transactional outbox row; -1 means the database check is unavailable. Treat either state as a release-stop.",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+          "fieldConfig": {"defaults": {"decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}},
+          "targets": [
+            {
+              "expr": "min(raffle_apply_outbox_parity_gap) or vector(-1)",
+              "legendFormat": "parity gap",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "type": "timeseries",
+          "title": "Transactional outbox outcomes",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+          "targets": [{"expr": "sum by (result) (max by (pod, result) (rate(raffle_outbox_events_total[5m])))", "legendFormat": "{{result}}", "refId": "A"}]
         }
       ]
     }
