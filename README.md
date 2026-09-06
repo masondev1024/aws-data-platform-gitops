@@ -94,6 +94,8 @@ EKS API는 기본적으로 private endpoint이며, 로컬에서 Terraform/Helm b
 
 이것은 Backstage 전체 설치를 이미 운영한다는 주장이 아니라, 내부 개발자 플랫폼으로 승격할 수 있는 실행 가능한 service template과 계약입니다. 다음 확장 단계는 중앙 reusable workflow와 Argo CD ApplicationSet에 연결하는 것입니다.
 
+구현 중 발생한 CI/CD·AWS OIDC·SBOM·ECR scan·distroless runtime 실패와 선택 근거는 [PORTFOLIO_ENGINEERING_JOURNEY.md](PORTFOLIO_ENGINEERING_JOURNEY.md)에 별도로 기록했습니다. 포트폴리오와 면접에서는 결과만 나열하지 않고 증상·원인·복구·재발 방지까지 설명할 수 있습니다.
+
 ## 검증된 운영 증거와 범위
 
 - EKS/Argo CD/Argo Rollouts canary, k6 부하 검증, RDS failover, soak 및 teardown 결과는 [`docs/`](docs/)와 `evidence/`에 기록되어 있습니다.
