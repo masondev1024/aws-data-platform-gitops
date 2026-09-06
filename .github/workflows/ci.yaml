@@ -66,10 +66,10 @@ jobs:
         run: test -s /tmp/rendered-manifests.yaml
       - name: Assert D2C release controls are rendered
         run: |
-          rg --fixed-strings "data-pipeline-schema-migration" /tmp/rendered-manifests.yaml
-          rg --fixed-strings "canary-apply-outbox-parity" /tmp/rendered-manifests.yaml
-          rg --fixed-strings "ALLOW_FAILURE_DRILL" k8s/overlays/validation/patch-rollout.yaml
-          rg --fixed-strings "value: validation" /tmp/rendered-validation-manifests.yaml
+          grep -F "data-pipeline-schema-migration" /tmp/rendered-manifests.yaml
+          grep -F "canary-apply-outbox-parity" /tmp/rendered-manifests.yaml
+          grep -F "ALLOW_FAILURE_DRILL" k8s/overlays/validation/patch-rollout.yaml
+          grep -F "value: validation" /tmp/rendered-validation-manifests.yaml
 
   loadtest-script:
     name: k6 load-test script validation
