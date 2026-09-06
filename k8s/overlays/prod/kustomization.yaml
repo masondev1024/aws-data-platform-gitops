@@ -5,4 +5,4 @@ resources:
 images:
   - name: data-pipeline-app
     newName: 854745312525.dkr.ecr.eu-west-1.amazonaws.com/data-pipeline-app
-    newTag: 3c15573123678605db18f17ed60b25ce77f21f11
+    newTag: ab5ba2d17cde537caf7d33c1234e93ebbd9935bf
