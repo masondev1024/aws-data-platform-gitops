@@ -361,6 +361,16 @@ smoke test는 “HTTP 200이 나오는가”보다 probe 계약과 의존성 의
 
 이런 문제를 앱 장애로 잘못 분류하지 않는 것도 운영 품질의 일부다. 실패한 명령 자체와 시스템의 상태 변화를 분리해서 기록했다.
 
+### INC-08. GitOps bot commit으로 main과 feature가 분기됨
+
+distroless 변경을 feature에 커밋하는 동안 이전 CD가 production kustomization을 갱신하는 bot commit을 main에 추가했다. 그 결과 feature는 기존 main을 기준으로 진행 중이고 main은 GitOps image update를 포함해 앞서가므로 fast-forward merge가 거부됐다.
+
+~~~text
+Diverging branches can't be fast-forwarded
+~~~
+
+reset이나 force push로 어느 쪽 이력을 지우지 않고, main의 bot manifest commit과 feature의 runtime/docs commit을 모두 보존하는 no-ff merge를 선택한다. 자동화 bot이 main에 commit하는 GitOps 전략에서는 release 직전에 origin/main을 fetch하고 branch divergence를 확인해야 한다.
+
 ## 5. 이전 운영 검증에서 누적된 장애 패턴
 
 이번 release path 이전에도 저장소의 CI, Kubernetes, Terraform, AWS streaming, Rollout을 실제로 검증하면서 다음 문제를 겪었다. 이 항목들은 현재 설계의 배경이며, 기존 상세 로그는 docs/troubleshooting.md와 docs/lessons-learned.md에 남겨 두었다.
