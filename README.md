@@ -15,6 +15,8 @@
 
 애플리케이션 변경 시 CD workflow가 `app/`을 `eu-west-1` ECR에 SHA 태그로 빌드·push하고, `k8s/overlays/prod/kustomization.yaml`의 이미지 태그를 갱신합니다. Argo CD는 `main`의 `k8s/overlays/prod`를 감시하고 Argo Rollouts canary 절차를 수행합니다.
 
+런타임 이미지는 Python 3.13 slim builder와 digest로 고정한 distroless Python 3.13 non-root runtime을 멀티스테이지로 분리합니다. 최종 이미지에는 shell과 package manager를 포함하지 않고 UID 65532로 실행하며, CD의 Trivy 정책은 수정 가능한 HIGH/CRITICAL만 차단하고 vendor fix가 없는 기본 이미지 CVE는 ECR 네이티브 스캔 결과와 분리해 추적합니다.
+
 ## GitHub 설정
 
 Terraform 적용 후 출력되는 `github_actions_role_arn` 값을 CD용 저장소 변수로 등록합니다.
@@ -48,11 +50,11 @@ python3 -m pytest -q app/tests scripts/tests
 docker build --pull --tag data-pipeline-app-ci ./app
 kubectl kustomize k8s/overlays/prod >/tmp/rendered-production.yaml
 
-python scripts/scaffold_service.py \
+python3 scripts/scaffold_service.py \
   --name catalog-api \
   --owner team-d2c-platform \
   --output-dir /tmp/catalog-api
-python -m pytest -q /tmp/catalog-api/app/tests
+python3 -m pytest -q /tmp/catalog-api/app/tests
 kubectl kustomize /tmp/catalog-api/k8s/base >/tmp/rendered-golden-path.yaml
 
 cd terraform
@@ -91,6 +93,8 @@ EKS API는 기본적으로 private endpoint이며, 로컬에서 Terraform/Helm b
 [`platform/golden-path`](platform/golden-path)는 이 저장소의 배포 패턴을 다른 서비스가 재사용할 수 있게 만든 첫 번째 IDP slice입니다. 스캐폴더는 서비스 소유자, Backstage catalog metadata, CI, 비-root 컨테이너, health probe, Kustomize, Argo Rollouts canary, Prometheus error-rate/p95 latency 분석 템플릿을 한 번에 생성합니다.
 
 이것은 Backstage 전체 설치를 이미 운영한다는 주장이 아니라, 내부 개발자 플랫폼으로 승격할 수 있는 실행 가능한 service template과 계약입니다. 다음 확장 단계는 중앙 reusable workflow와 Argo CD ApplicationSet에 연결하는 것입니다.
+
+구현 중 발생한 CI/CD·AWS OIDC·SBOM·ECR scan·distroless runtime 실패와 선택 근거는 [PORTFOLIO_ENGINEERING_JOURNEY.md](PORTFOLIO_ENGINEERING_JOURNEY.md)에 별도로 기록했습니다. 포트폴리오와 면접에서는 결과만 나열하지 않고 증상·원인·복구·재발 방지까지 설명할 수 있습니다.
 
 ## 검증된 운영 증거와 범위
 

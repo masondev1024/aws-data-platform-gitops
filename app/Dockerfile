@@ -1,25 +1,32 @@
-FROM python:3.12-slim-trixie@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
+FROM python:3.13-slim-trixie@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285 AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
-WORKDIR /app
-
-RUN groupadd --gid 10001 app \
-    && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin app
+WORKDIR /build
 
 COPY requirements.txt ./
 RUN python -m pip install --upgrade pip==26.2.1 \
-    && python -m pip install --requirement requirements.txt
+    && python -m pip install --no-cache-dir --target=/opt/python --requirement requirements.txt
 
-COPY --chown=10001:10001 app.py draw_winner.py migrate.py schema.py ./
-COPY --chown=10001:10001 templates/ ./templates/
-COPY --chown=10001:10001 static/ ./static/
+FROM gcr.io/distroless/python3-debian13:nonroot@sha256:f3d5ddc6c64a019fe520e7f005f2880be21e6afc461b10a3c15ef2e4edc71e33
 
-USER 10001:10001
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/opt/python
+
+WORKDIR /app
+
+COPY --from=builder /opt/python /opt/python
+
+COPY --chown=65532:65532 app.py draw_winner.py migrate.py schema.py ./
+COPY --chown=65532:65532 templates/ ./templates/
+COPY --chown=65532:65532 static/ ./static/
+
+USER 65532:65532
 EXPOSE 8080
 
 # Keep one Prometheus registry per pod. Scale horizontally with Rollout/HPA
 # rather than using Gunicorn workers that would expose split counter state.
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "4", "--worker-tmp-dir", "/dev/shm", "--timeout", "30", "--access-logfile", "-", "--error-logfile", "-", "app:app"]
+CMD ["-m", "gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "4", "--worker-tmp-dir", "/dev/shm", "--timeout", "30", "--access-logfile", "-", "--error-logfile", "-", "app:app"]

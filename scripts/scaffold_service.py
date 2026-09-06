@@ -44,20 +44,30 @@ TEMPLATES = {
           owner: group:__OWNER__
     """,
     "Dockerfile": """
-        FROM python:3.12-slim-trixie@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea
+        FROM python:3.13-slim-trixie@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285 AS builder
 
         ENV PYTHONDONTWRITEBYTECODE=1 \\
-            PYTHONUNBUFFERED=1
-        WORKDIR /opt/service
+            PYTHONUNBUFFERED=1 \\
+            PIP_NO_CACHE_DIR=1
+
+        WORKDIR /build
 
         COPY app/requirements.txt ./requirements.txt
-        RUN python -m pip install --no-cache-dir --requirement requirements.txt \\
-            && useradd --create-home --uid 10001 service
+        RUN python -m pip install --no-cache-dir --target=/opt/python --requirement requirements.txt
 
+        FROM gcr.io/distroless/python3-debian13:nonroot@sha256:f3d5ddc6c64a019fe520e7f005f2880be21e6afc461b10a3c15ef2e4edc71e33
+
+        ENV PYTHONDONTWRITEBYTECODE=1 \\
+            PYTHONUNBUFFERED=1 \\
+            PYTHONPATH=/opt/python
+
+        WORKDIR /opt/service
+
+        COPY --from=builder /opt/python /opt/python
         COPY app ./app
-        USER 10001:10001
+        USER 65532:65532
         EXPOSE __PORT__
-        CMD ["gunicorn", "--bind", "0.0.0.0:__PORT__", "app.app:app"]
+        CMD ["-m", "gunicorn", "--bind", "0.0.0.0:__PORT__", "app.app:app"]
     """,
     "app/requirements.txt": """
         Flask==3.1.3
