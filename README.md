@@ -15,6 +15,8 @@
 
 애플리케이션 변경 시 CD workflow가 `app/`을 `eu-west-1` ECR에 SHA 태그로 빌드·push하고, `k8s/overlays/prod/kustomization.yaml`의 이미지 태그를 갱신합니다. Argo CD는 `main`의 `k8s/overlays/prod`를 감시하고 Argo Rollouts canary 절차를 수행합니다.
 
+런타임 이미지는 Python 3.13 slim builder와 digest로 고정한 distroless Python 3.13 non-root runtime을 멀티스테이지로 분리합니다. 최종 이미지에는 shell과 package manager를 포함하지 않고 UID 65532로 실행하며, CD의 Trivy 정책은 수정 가능한 HIGH/CRITICAL만 차단하고 vendor fix가 없는 기본 이미지 CVE는 ECR 네이티브 스캔 결과와 분리해 추적합니다.
+
 ## GitHub 설정
 
 Terraform 적용 후 출력되는 `github_actions_role_arn` 값을 CD용 저장소 변수로 등록합니다.
@@ -48,11 +50,11 @@ python3 -m pytest -q app/tests scripts/tests
 docker build --pull --tag data-pipeline-app-ci ./app
 kubectl kustomize k8s/overlays/prod >/tmp/rendered-production.yaml
 
-python scripts/scaffold_service.py \
+python3 scripts/scaffold_service.py \
   --name catalog-api \
   --owner team-d2c-platform \
   --output-dir /tmp/catalog-api
-python -m pytest -q /tmp/catalog-api/app/tests
+python3 -m pytest -q /tmp/catalog-api/app/tests
 kubectl kustomize /tmp/catalog-api/k8s/base >/tmp/rendered-golden-path.yaml
 
 cd terraform
