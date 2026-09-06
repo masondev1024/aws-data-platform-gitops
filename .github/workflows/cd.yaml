@@ -95,6 +95,9 @@ jobs:
           trivy image --ignorefile .trivyignore --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL
           --scanners vuln "${{ steps.image.outputs.reference }}"
 
+      - name: Prepare release evidence directory
+        run: mkdir -p release
+
       - name: Generate an SPDX SBOM for the published digest
         uses: anchore/sbom-action@v0.24.0
         with:
