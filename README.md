@@ -77,7 +77,7 @@ terraform plan \
 
 EKS API는 기본적으로 private endpoint이며, 로컬에서 Terraform/Helm bootstrap을 수행할 때만 `cluster_endpoint_public_access=true`와 `CLUSTER_API_ALLOWED_CIDRS`를 함께 지정합니다. Terraform과 Helm을 VPC 내부 SSM runner에서 실행하는 운영형 경로는 private endpoint를 그대로 사용합니다. CIDR 없이 public endpoint를 열 수 없도록 validation에서 fail-closed 합니다.
 
-테스트 비용을 줄이기 위해 기본값은 EKS worker 1대(`t3.medium`), NAT Gateway 1개, RDS primary-only·Single-AZ로 조정했습니다. 고가용성 검증이 필요한 경우에만 `enable_multi_az_nat=true`, `enable_rds_replica=true`, `enable_rds_multi_az=true`, node 수 증가를 별도로 선택합니다. RDS Multi-AZ는 동기 standby와 failover drill을 위한 명시적 비용 선택이며, 전체 선택 근거와 실제 측정값은 [`docs/data-engineering-decisions.md`](docs/data-engineering-decisions.md), [`docs/lessons-learned.md`](docs/lessons-learned.md), [`docs/failure-drills.md`](docs/failure-drills.md)에 기록합니다.
+테스트 비용을 줄이기 위해 기본값은 EKS worker 1대(`t3.medium`), NAT Gateway 1개, RDS primary-only·Single-AZ로 조정했습니다. 고가용성 검증이 필요한 경우에만 `enable_multi_az_nat=true`, `enable_rds_replica=true`, `enable_rds_multi_az=true`, node 수 증가를 별도로 선택합니다. RDS Multi-AZ는 동기 standby와 failover drill을 위한 명시적 비용 선택이며, 전체 선택 근거와 실제 측정값은 로컬 전용 engineering notes에 기록합니다.
 
 ## 배포 전 조건
 
@@ -94,11 +94,11 @@ EKS API는 기본적으로 private endpoint이며, 로컬에서 Terraform/Helm b
 
 이것은 Backstage 전체 설치를 이미 운영한다는 주장이 아니라, 내부 개발자 플랫폼으로 승격할 수 있는 실행 가능한 service template과 계약입니다. 다음 확장 단계는 중앙 reusable workflow와 Argo CD ApplicationSet에 연결하는 것입니다.
 
-구현 중 발생한 CI/CD·AWS OIDC·SBOM·ECR scan·distroless runtime 실패와 선택 근거는 [PORTFOLIO_ENGINEERING_JOURNEY.md](PORTFOLIO_ENGINEERING_JOURNEY.md)에 별도로 기록했습니다. 포트폴리오와 면접에서는 결과만 나열하지 않고 증상·원인·복구·재발 방지까지 설명할 수 있습니다.
+구현 중 발생한 CI/CD·AWS OIDC·SBOM·ECR scan·distroless runtime 실패와 선택 근거는 저장소 외부의 로컬 engineering notes로 관리합니다. 원격 README에는 재현 가능한 실행 방법과 공개 가능한 시스템 경계만 남깁니다.
 
 ## 검증된 운영 증거와 범위
 
-- EKS/Argo CD/Argo Rollouts canary, k6 부하 검증, RDS failover, soak 및 teardown 결과는 [`docs/`](docs/)와 `evidence/`에 기록되어 있습니다.
+- EKS/Argo CD/Argo Rollouts canary, k6 부하 검증, RDS failover, soak 및 teardown의 공개 가능한 machine-readable 결과는 `evidence/`에 남아 있으며, 상세 작업 기록은 로컬 전용으로 보관합니다.
 - 현재 기본 Terraform 프로필은 비용 보호를 위해 full-stack apply가 차단되어 있으며, 검증이 끝난 AWS 리소스는 상시 유지하지 않습니다.
 - Kafka relay/consumer와 S3 lakehouse 흐름은 별도 [`d2c-event-data-platform`](https://github.com/masondev1024/d2c-event-data-platform) 저장소에서 운영 설계와 로컬 검증 증거를 관리합니다. 이 저장소는 그 앞단의 실제 D2C 서비스 승인 경계와 배포 플랫폼 증거를 담당합니다.
 

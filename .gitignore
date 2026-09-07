@@ -12,3 +12,9 @@
 __pycache__/
 *.pyc
 .omx/
+
+# Local-only engineering notes and portfolio records
+docs/
+PORTFOLIO_ENGINEERING_JOURNEY.md
+loadtest/README.md
+platform/golden-path/README.md
