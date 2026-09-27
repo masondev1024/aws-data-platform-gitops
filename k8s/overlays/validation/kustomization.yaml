@@ -5,8 +5,9 @@ resources:
   - ../../base
 images:
   - name: data-pipeline-app
-    newName: data-pipeline-app
-    newTag: pending-reviewed-release
+    newName: 854745312525.dkr.ecr.eu-west-1.amazonaws.com/data-pipeline-app
+    newTag: 187c7d225c6ed9027d09b60bc531ae3bc8ea9f58
+    digest: sha256:4ac7d393b52b8084c4f15b2bada9422f4c822467854fb03ea5d169467a5e9fef
 patches:
   - target:
       group: argoproj.io
