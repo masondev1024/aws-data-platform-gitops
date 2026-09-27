@@ -1,19 +1,10 @@
-import pymysql
-import os
 import random
 from datetime import datetime
 
-# DB 설정 (기존 환경변수 활용)
-DB_CONFIG = {
-    "host": os.environ.get('DB_WRITER_HOST'),
-    "user": os.environ.get('DB_USER', 'admin'),
-    "password": os.environ.get('DB_PASSWORD'),
-    "database": os.environ.get('DB_NAME', 'raffle_db'),
-    "cursorclass": pymysql.cursors.DictCursor
-}
+from app import get_db_connection
 
 def run_draw():
-    conn = pymysql.connect(**DB_CONFIG)
+    conn = get_db_connection(is_write=True)
     try:
         with conn.cursor() as cursor:
             # 1. 추첨 대상 찾기 (종료시간 지남 + 아직 추첨 안 됨)

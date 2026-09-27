@@ -1,0 +1,2 @@
+# Optional: install only when explicitly enabling live OpenAI Responses API calls.
+openai==3.17.0

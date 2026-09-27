@@ -1,0 +1,2 @@
+# Optional Bedrock adapter only. OpenAI remains the default backend.
+boto3==1.42.97

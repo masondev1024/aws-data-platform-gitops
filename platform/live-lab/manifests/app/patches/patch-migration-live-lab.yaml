@@ -1,0 +1,60 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: data-pipeline-schema-migration
+  labels:
+    live-lab-session: __SESSION_ID__
+    live-lab-approval: __APPROVAL_ID__
+spec:
+  template:
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: schema-migration
+          env:
+            - name: DEPLOYMENT_TIER
+              value: validation
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: SEED_SAMPLE_DATA
+              value: "true"
+            - name: LIVE_LAB_SYNTHETIC_SEED
+              value: "true"
+          envFrom:
+            - configMapRef:
+                name: raffle-config
+            - secretRef:
+                name: raffle-migration-secret
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: rds-ca-bundle
+              mountPath: /etc/rds-ca
+              readOnly: true
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: rds-ca-bundle
+          configMap:
+            name: rds-ca-bundle
+            items:
+              - key: global-bundle.pem
+                path: global-bundle.pem

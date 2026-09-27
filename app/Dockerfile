@@ -10,17 +10,17 @@ COPY requirements.txt ./
 RUN python -m pip install --upgrade pip==26.2.1 \
     && python -m pip install --no-cache-dir --target=/opt/python --requirement requirements.txt
 
-FROM gcr.io/distroless/python3-debian13:nonroot@sha256:f3d5ddc6c64a019fe520e7f005f2880be21e6afc461b10a3c15ef2e4edc71e33
+FROM gcr.io/distroless/python3-debian13:nonroot@sha256:8ee214843129f43e2ebf5e0ca9f2e4e6d8292143d1b8a6787f169b5898578884
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/opt/python
+    PYTHONPATH=/opt/python:/app
 
 WORKDIR /app
 
 COPY --from=builder /opt/python /opt/python
 
-COPY --chown=65532:65532 app.py draw_winner.py migrate.py schema.py ./
+COPY --chown=65532:65532 app.py db.py catalog_cache.py draw_winner.py migrate.py schema.py ./
 COPY --chown=65532:65532 templates/ ./templates/
 COPY --chown=65532:65532 static/ ./static/
 

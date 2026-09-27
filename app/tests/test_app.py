@@ -1,5 +1,6 @@
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -82,6 +83,52 @@ def test_health_check_does_not_require_database(client):
     assert response.headers["X-Content-Type-Options"] == "nosniff"
 
 
+def test_catalogue_cache_does_not_share_csrf_tokens_or_authentication(monkeypatch):
+    monkeypatch.setitem(app.config, "CATALOG_CACHE_TTL_SECONDS", 1.0)
+    monkeypatch.setattr(app_module, "catalog_cache", app_module.CatalogCache())
+    calls = []
+    monkeypatch.setattr(app_module, "load_catalog_items", lambda: calls.append(True) or [])
+    app.config.update(TESTING=True, SECRET_KEY="test-secret", WTF_CSRF_ENABLED=True)
+    anonymous = app.test_client()
+    authenticated = app.test_client()
+    with authenticated.session_transaction() as session:
+        session["user_id"] = "member"
+    first = anonymous.get("/")
+    second = authenticated.get("/")
+    token = r'<meta name="csrf-token" content="([^"]+)">'
+    assert re.search(token, first.text)[1] != re.search(token, second.text)[1]
+    assert "MYPAGE" not in first.text
+    assert "MYPAGE" in second.text
+    assert first.headers["Cache-Control"] == "private, no-store"
+    assert len(calls) == 1
+
+
+def test_catalogue_database_failure_returns_unavailable(client, monkeypatch):
+    monkeypatch.setitem(app.config, "CATALOG_CACHE_TTL_SECONDS", 0)
+    def fail():
+        raise app_module.pymysql.OperationalError("database unavailable")
+    monkeypatch.setattr(app_module, "load_catalog_items", fail)
+    response = client.get("/")
+    assert response.status_code == 503
+    assert "database unavailable" not in response.text
+
+
+def test_health_check_is_reachable_with_load_balancer_probe_host(client, monkeypatch):
+    monkeypatch.setitem(app.config, "LIVE_LAB_TRUSTED_HOSTS", ["*.ap-northeast-2.elb.amazonaws.com"])
+    response = client.get("/healthz", headers={"Host": "10.72.1.20:8080"})
+    assert response.status_code == 200
+
+
+def test_trusted_host_allows_only_the_configured_regional_load_balancer(client, monkeypatch):
+    monkeypatch.setitem(app.config, "LIVE_LAB_TRUSTED_HOSTS", ["*.ap-northeast-2.elb.amazonaws.com"])
+    allowed = client.get("/signup", headers={"Host": "lab-123.ap-northeast-2.elb.amazonaws.com"})
+    wrong_region_order = client.get("/signup", headers={"Host": "lab-123.elb.ap-northeast-2.amazonaws.com"})
+    denied = client.get("/signup", headers={"Host": "attacker.example.net"})
+    assert allowed.status_code == 200
+    assert wrong_region_order.status_code == 400
+    assert denied.status_code == 400
+
+
 def test_metrics_endpoint_exposes_bounded_http_metrics(client):
     client.get("/healthz")
 
@@ -94,6 +141,24 @@ def test_metrics_endpoint_exposes_bounded_http_metrics(client):
     assert 'route="/healthz"' in body
     assert "raffle_http_request_duration_seconds" in body
     assert "raffle_outbox_events_total" in body
+
+
+def test_new_process_preinitializes_canary_failure_and_apply_counter_series():
+    code = (
+        "import sys; sys.path.insert(0, 'app'); import app; "
+        "from prometheus_client import generate_latest; "
+        "print(generate_latest().decode())"
+    )
+    output = subprocess.check_output(
+        [sys.executable, "-c", code],
+        cwd=Path(__file__).resolve().parents[2],
+        text=True,
+    )
+    metrics = set(output.splitlines())
+
+    assert 'raffle_http_requests_total{method="POST",route="/api/apply",status="503"} 0.0' in metrics
+    assert 'raffle_apply_requests_total{result="success"} 0.0' in metrics
+    assert 'raffle_apply_requests_total{result="integrity_protection_rejected"} 0.0' in metrics
 
 
 def test_metrics_exposes_database_backed_outbox_parity(client, monkeypatch):
@@ -135,11 +200,24 @@ def test_metrics_fails_closed_when_production_writer_endpoint_is_missing(client,
 
 
 def test_readiness_check_returns_service_unavailable_when_database_is_down(client):
-    with patch("app.get_db_connection", side_effect=app_module.pymysql.OperationalError("down")):
+    with patch("app.get_db_connection", side_effect=app_module.pymysql.OperationalError("down")) as connect:
         response = client.get("/readyz")
 
     assert response.status_code == 503
     assert response.get_json() == {"status": "not_ready"}
+    assert connect.call_args.kwargs == {"is_write": True}
+
+
+def test_readiness_requires_writer_endpoint_not_only_reader(client):
+    cursor = FakeCursor(fetchone_result={"ready": 1})
+    connection = FakeConnection(cursor)
+
+    with patch("app.get_db_connection", return_value=connection) as connect:
+        response = client.get("/readyz")
+
+    assert response.status_code == 200
+    assert connect.call_args.kwargs == {"is_write": True}
+    assert connection.close_count == 1
 
 
 def test_apply_rejects_missing_csrf_token(client):
@@ -268,3 +346,26 @@ def test_signup_page_is_available_without_database(client):
     assert response.status_code == 200
     assert "회원가입" in response.get_data(as_text=True)
     assert "csrf-token" in response.get_data(as_text=True)
+
+
+def test_login_returns_fresh_csrf_token_for_cleared_session(client, monkeypatch):
+    headers = csrf_headers(client)
+    cursor = FakeCursor(fetchone_result={"id": 7, "password": generate_password_hash("test-password")})
+    connection = FakeConnection(cursor)
+    monkeypatch.setattr(app_module, "get_db_connection", lambda **kwargs: connection)
+
+    response = client.post(
+        "/api/login",
+        json={"username": "member01", "password": "test-password"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    fresh_token = response.get_json()["csrf_token"]
+    assert fresh_token
+    apply_response = client.post(
+        "/api/apply",
+        json={"item_id": 1},
+        headers={"X-CSRFToken": fresh_token},
+    )
+    assert apply_response.status_code == 200

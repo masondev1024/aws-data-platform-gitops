@@ -1,0 +1,68 @@
+version: 2
+scope: ephemeral-seoul-live-lab
+status: live-tested-with-caveats-cleanup-complete
+current_delivery_validation: pending-live-gitops-run
+execution_window:
+  region: ap-northeast-2
+  max_hours: 3
+  start_cleanup_by_hours: 2
+  planning_ceiling_usd_pre_tax: 5.50
+  minimum_reserve_usd: 1.00
+  hard_aws_spend_cap: false
+positive_acceptance:
+  - name: account_region_cost_gate
+    evidence: "Identity and plan target only the approved AWS account and Seoul region; estimate including at least USD 1 reserve is <= USD 5.50 before apply. Historical six-hour results below are not the current execution budget."
+  - name: isolated_multiaz_database
+    evidence: "Private RDS MySQL writer is Multi-AZ and a distinct single-AZ asynchronous read replica exists; no NAT or public RDS endpoint exists."
+  - name: verified_db_tls_and_least_privilege
+    evidence: "App, migration and scheduled-job connections verify RDS CA and hostname; runtime account is separate from migration admin and has only required DML grants."
+  - name: https_secure_cookie
+    evidence: "Session ALB serves HTTPS; k6 checks the Secure session-cookie attribute. Self-signed trust bypass is limited to this session ALB and is not browser/public-trust evidence."
+  - name: bounded_soak_and_burst
+    evidence: "k6 records 20 RPS list reads for 60 minutes followed by a 100 RPS, 5-minute burst; actual request count is in the session-wide <=200,000 request ledger."
+  - name: canary_analysis_and_rollback
+    evidence: "Argo Rollouts observes 5-minute warmup windows and three fresh 30-second samples; missing/stale signals, >=1% 5xx, p95 >=500ms, outbox mismatch, or <100 successful canary applies block promotion and abort the canary."
+  - name: raffle_outbox_integrity
+    evidence: "A unique synthetic user cohort is reconciled against entry and transactional outbox rows on writer and reader before and after recovery."
+  - name: multiaz_writer_failover
+    evidence: "Forced Multi-AZ failover records the first failed and five consecutive recovered writer-readiness probes, returning observed application RTO."
+  - name: async_replica_promotion
+    evidence: "Promotion requires stopped writers/CronJob, exact replicated entry/outbox marker, RDS read-replication Normal=true, and two recent non-negative acceptable replica-lag measurements; old writer is fenced before writes resume."
+  - name: pod_and_release_recovery
+    evidence: "Pod deletion and intentionally unhealthy canary drills show replacement behavior and automatic rollout abort while stable traffic remains available."
+  - name: agentic_triage_boundary
+    evidence: "Agent diagnosis cites collected evidence IDs, labels unavailable observations unknown, and cannot execute shell, SQL, Kubernetes writes, deployments or rollback."
+  - name: scoped_teardown
+    evidence: "ALB/controller children are removed before EKS; RDS, ECR, WAF, ACM and session Secret resources are deleted and a session-scoped residual inventory is recorded."
+negative_acceptance:
+  - name: mismatched_account_or_region
+    evidence: "Account, region, or operator CIDR mismatch stops before resource creation."
+  - name: missing_or_stale_metrics
+    evidence: "Absent/stale canary metrics fail closed and cannot promote a release."
+  - name: writer_unavailable
+    evidence: "A reachable read replica cannot make readiness pass while the writer is unavailable."
+  - name: replication_marker_or_lag_not_safe
+    evidence: "Missing marker/outbox record, stale lag, negative/unavailable lag, unhealthy RDS replication status, or excessive lag prevents replica promotion. Pre-promotion failure restores the exact original app/CronJob state; post-promotion failure leaves writers quiesced."
+  - name: cleanup_deadline_or_partial_failure
+    evidence: "Cleanup failure preserves a checkpoint, reports exact residuals as unknown/remaining, and never reports zero resources on timeout."
+not_evidence:
+  - "Terraform fmt/validate/plan alone is not AWS runtime, cost, load, failover or cleanup proof."
+  - "The synthetic list endpoint workload is not a reproduction of SOOP production traffic or tens of thousands of real users."
+  - "A six-hour USD 10 planning ceiling is not an AWS hard spending limit or a guaranteed final invoice."
+  - "An ACM self-signed certificate tests encrypted transport and Secure-cookie behavior, not public certificate trust."
+  - "Fixture-based Agentic AI tests do not establish live LLM diagnostic quality or autonomous remediation."
+  - "A point-in-time tag inventory cannot prove that untagged resources or delayed billing are absent."
+  - "Local kubectl rendering is not GitOps or cloud execution evidence."
+
+observed_results:
+  date: "2026-09-23"
+  multi_az_writer_failover: "Measured twice: first readiness failure at 11.248s and 11.037s; five consecutive healthy probes by 42.365s and 42.057s."
+  soak_and_burst: "101994 requests; 2 HTTP/check failures; 3 dropped iterations; p95 133.8ms; p99 objective failed; HPA scaled 2 to 4."
+  synchronized_refresh: "7784 requests; 5572 HTTP failures (71.6%); p95 35.8s; ALB recorded 1541 502s and 836 target connection errors; two app restarts."
+  canary_fault_injection: "The canary produced controlled 503s; the first 5xx analysis sample was 4.53%; Argo aborted and traffic returned to stable 100%, canary 0%."
+  pod_recovery: "During deletion 4/150 requests failed and max latency was 9.346s; after recovery 150/150 passed and p95 was 31.884ms."
+  async_replica_promotion: "Final writer/read marker and outbox parity were found; marker appeared on the reader after 65.251s. Promotion completed in 347.152s from writer quiescence, old writer was fenced, new writer and app readiness passed. Caveat: the run's latest ReplicaLag values included -1 and 0 while RDS replication reported connecting; the old gate incorrectly accepted -1. Do not count this as a healthy-lag promotion pass."
+  async_replica_gate_fix: "Local code now requires RDS read-replication Normal=true and two distinct recent non-negative lag samples. Unit/contract tests passed; this stricter live gate has not yet been rerun in AWS."
+  agentic_collection: "Live Kubernetes and Prometheus collector returned 12 observations and 0 unknowns; output file mode 0600. No external model call was made."
+  teardown: "Terraform state is empty and reconciled session-tagged live resources are 0. The reconciler verified caller identity and ARN account/region; one historical security-group-rule ARN remained in Resource Groups Tagging API and EC2 DescribeSecurityGroupRules returned InvalidSecurityGroupRuleId.NotFound. Errors, incomplete responses and unsupported ARNs remain unresolved and block completion. Final AWS billing is not yet available."
+  cost: "USD 9.59 was the conservative 6-hour pre-tax plan, not a hard cap or final billed amount; AWS billing is delayed."

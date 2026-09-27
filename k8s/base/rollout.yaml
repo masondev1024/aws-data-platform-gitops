@@ -14,7 +14,9 @@ spec:
           servicePort: 80
       steps:
         - setWeight: 10
-        - pause: { duration: 2m }
+        # Keep load running for a full five-minute measurement window before
+        # analysis; the AnalysisTemplate then takes three fresh 30s samples.
+        - pause: { duration: 5m }
         - analysis:
             templates:
               - templateName: data-pipeline-canary

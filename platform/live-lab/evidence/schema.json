@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Kyobo live lab evidence",
+  "type": "object",
+  "required": [
+    "status",
+    "approval_id",
+    "aws_account_id",
+    "aws_region",
+    "session_id",
+    "source_hash",
+    "started_at_utc",
+    "checks",
+    "teardown"
+  ],
+  "properties": {
+    "status": { "enum": ["not_run", "running", "passed", "failed", "partial", "blocked"] },
+    "approval_id": { "type": "string", "pattern": "^SS0-[0-9]{8}-[A-Za-z0-9._-]{3,64}$" },
+    "aws_account_id": { "type": "string", "pattern": "^[0-9]{12}$" },
+    "aws_region": { "type": "string" },
+    "session_id": { "type": "string" },
+    "source_hash": { "type": "string" },
+    "started_at_utc": { "type": "string" },
+    "ended_at_utc": { "type": "string" },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "command", "exit_code", "result"],
+        "properties": {
+          "name": { "type": "string" },
+          "command": { "type": "string" },
+          "exit_code": { "type": "integer" },
+          "result": { "enum": ["pass", "fail", "blocked", "unknown"] },
+          "notes": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "teardown": {
+      "type": "object",
+      "required": ["started", "completed", "residuals"],
+      "properties": {
+        "started": { "type": "boolean" },
+        "completed": { "type": "boolean" },
+        "residuals": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["resource", "state"],
+            "properties": {
+              "resource": { "type": "string" },
+              "state": { "enum": ["deleted", "deleting", "unknown", "residual"] },
+              "notes": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,33 @@
+- op: replace
+  path: /spec/template/spec/containers/0/env/1/value
+  value: validation
+- op: add
+  path: /spec/template/spec/containers/0/volumeMounts
+  value:
+    - name: rds-ca-bundle
+      mountPath: /etc/rds-ca
+      readOnly: true
+- op: add
+  path: /spec/template/spec/containers/0/resources/limits
+  value:
+    cpu: "500m"
+    memory: "768Mi"
+- op: add
+  path: /spec/template/spec/containers/0/readinessProbe/httpGet/httpHeaders
+  value:
+    - name: Host
+      value: live-lab.invalid
+- op: add
+  path: /spec/template/spec/containers/0/livenessProbe/httpGet/httpHeaders
+  value:
+    - name: Host
+      value: live-lab.invalid
+- op: add
+  path: /spec/template/spec/volumes
+  value:
+    - name: rds-ca-bundle
+      configMap:
+        name: rds-ca-bundle
+        items:
+          - key: global-bundle.pem
+            path: global-bundle.pem

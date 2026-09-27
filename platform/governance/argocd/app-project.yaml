@@ -1,0 +1,63 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: kyobo-platform-validation
+  namespace: argocd
+spec:
+  description: Exact governance boundary for the validation app lane.
+  sourceRepos:
+    - https://github.com/masondev1024/aws-data-platform-gitops
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: platform-validation
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: Service
+    - group: "argoproj.io"
+      kind: AnalysisTemplate
+    - group: "argoproj.io"
+      kind: Rollout
+    - group: "autoscaling"
+      kind: HorizontalPodAutoscaler
+    - group: "batch"
+      kind: CronJob
+    - group: "batch"
+      kind: Job
+    - group: "monitoring.coreos.com"
+      kind: PrometheusRule
+    - group: "monitoring.coreos.com"
+      kind: ServiceMonitor
+    - group: "networking.k8s.io"
+      kind: Ingress
+  namespaceResourceBlacklist:
+    - group: ""
+      kind: LimitRange
+    - group: ""
+      kind: ResourceQuota
+    - group: ""
+      kind: Secret
+    - group: ""
+      kind: ServiceAccount
+    - group: "argoproj.io"
+      kind: Application
+    - group: "argoproj.io"
+      kind: AppProject
+    - group: "networking.k8s.io"
+      kind: NetworkPolicy
+    - group: "rbac.authorization.k8s.io"
+      kind: Role
+    - group: "rbac.authorization.k8s.io"
+      kind: RoleBinding
+  roles:
+    - name: governance-readonly
+      description: Read Argo CD validation app state only; no sync or override.
+      policies:
+        - p, proj:kyobo-platform-validation:governance-readonly, applications, get, kyobo-platform-validation/*, allow
+    - name: governance-sync
+      description: Sync validation applications; revision approval requires separate global Argo configuration. No local override.
+      policies:
+        - p, proj:kyobo-platform-validation:governance-sync, applications, get, kyobo-platform-validation/*, allow
+        - p, proj:kyobo-platform-validation:governance-sync, applications, sync, kyobo-platform-validation/*, allow

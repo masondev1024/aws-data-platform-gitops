@@ -1,0 +1,100 @@
+name: Platform Verify
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  infrastructure-and-secrets:
+    name: IaC and secret publication gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@e07451d2e059ed86c2870430ea286b3a9e0bf241
+        with:
+          version: v0.72.0
+          cache: true
+      - name: Check infrastructure policy
+        run: trivy config --exit-code 1 --severity HIGH,CRITICAL --misconfig-scanners terraform,kubernetes .
+      - name: Check for exposed secrets
+        run: trivy fs --exit-code 1 --scanners secret --severity HIGH,CRITICAL .
+
+  tests:
+    name: Python tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            app/requirements*.txt
+            agentic_ops/requirements.txt
+      - name: Install dependencies
+        run: python -m pip install -r app/requirements-dev.txt
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.36.0
+      - name: Install pinned PromQL rule verifier
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/prometheus.tar.gz"
+          curl --fail --silent --show-error --location \
+            https://github.com/prometheus/prometheus/releases/download/v3.15.0/prometheus-3.15.0.linux-amd64.tar.gz \
+            --output "$archive"
+          printf '%s  %s\n' 2a542df32eac02ee17b9d844fb2aa1de00dafa5476579ba8a3ba862e9d572ea0 "$archive" | sha256sum --check
+          tar -xzf "$archive" -C "$RUNNER_TEMP" --strip-components=1 prometheus-3.15.0.linux-amd64/promtool
+          echo "PROMTOOL=$RUNNER_TEMP/promtool" >> "$GITHUB_ENV"
+      - name: Run shared test phase
+        run: scripts/verify_platform.sh tests
+
+  manifests:
+    name: Kubernetes manifests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.36.0
+      - name: Run shared manifest phase
+        run: scripts/verify_platform.sh manifests
+
+  terraform:
+    name: Terraform validation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: Run shared Terraform phase
+        run: scripts/verify_platform.sh terraform
+
+  python-security:
+    name: Python dependency and static checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            app/requirements*.txt
+            agentic_ops/requirements.txt
+      - name: Install audit tooling
+        run: python -m pip install -r app/requirements-dev.txt
+      - name: Run shared Python security phase
+        run: scripts/verify_platform.sh python-security

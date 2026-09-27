@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: governance-live-positive
+  namespace: platform-validation
+data:
+  purpose: disposable-argocd-governance-positive-control

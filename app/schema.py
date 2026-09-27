@@ -4,6 +4,8 @@ import re
 
 import pymysql
 
+from db import db_tls_options
+
 
 DATABASE_IDENTIFIER = re.compile(r"^[A-Za-z0-9_]+$")
 
@@ -55,6 +57,19 @@ SCHEMA_STATEMENTS = (
         KEY idx_raffle_outbox_unpublished (published_at, created_at)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS live_lab_cohort_markers (
+        run_id VARCHAR(64) PRIMARY KEY,
+        username VARCHAR(50) NOT NULL,
+        user_id INT NOT NULL,
+        entry_id INT NOT NULL,
+        event_id CHAR(36) NOT NULL,
+        recorded_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+        FOREIGN KEY (user_id) REFERENCES users(id),
+        FOREIGN KEY (entry_id) REFERENCES raffle_entries(id),
+        FOREIGN KEY (event_id) REFERENCES raffle_outbox_events(event_id)
+    )
+    """,
 )
 
 SAMPLE_ITEMS = (
@@ -77,13 +92,50 @@ def ensure_database_exists(*, host: str, user: str, password: str, database_name
     """Create the operator-configured database after validating its identifier."""
     if not DATABASE_IDENTIFIER.fullmatch(database_name):
         raise ValueError("DB_NAME must use only letters, numbers, and underscores")
-    connection = pymysql.connect(host=host, user=user, password=password, connect_timeout=5)
+    connection = pymysql.connect(
+        host=host,
+        user=user,
+        password=password,
+        connect_timeout=5,
+        **db_tls_options(),
+    )
     try:
         with connection.cursor() as cursor:
             cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{database_name}`")
         connection.commit()
     finally:
         connection.close()
+
+
+def ensure_application_user(
+    connection,
+    *,
+    username: str,
+    password: str,
+    database_name: str,
+) -> None:
+    """Idempotently grant the runtime user only the raffle DML permissions."""
+    if not re.fullmatch(r"[A-Za-z0-9_]{1,32}", username):
+        raise ValueError("DB_APP_USER must use 1-32 letters, numbers, or underscores")
+    if not DATABASE_IDENTIFIER.fullmatch(database_name):
+        raise ValueError("DB_NAME must use only letters, numbers, and underscores")
+
+    quoted_user = f"'{username}'@'%'"
+    quoted_user_for_parameterized_sql = quoted_user.replace("%", "%%")
+    quoted_database = f"`{database_name}`.*"
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f"CREATE USER IF NOT EXISTS {quoted_user_for_parameterized_sql} IDENTIFIED BY %s",
+            (password,),
+        )
+        cursor.execute(
+            f"ALTER USER {quoted_user_for_parameterized_sql} IDENTIFIED BY %s",
+            (password,),
+        )
+        cursor.execute(
+            f"GRANT SELECT, INSERT, UPDATE ON {quoted_database} TO {quoted_user}"
+        )
+    connection.commit()
 
 
 def apply_schema_migrations(connection, *, seed_sample_data: bool = False) -> None:

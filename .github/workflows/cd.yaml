@@ -5,28 +5,42 @@ on:
     branches: [main]
     paths:
       - "app/**"
+      - "k8s/**"
       - "scripts/write_release_evidence.py"
+      - "scripts/prepare_release_candidate.py"
+      - "scripts/verify_release_bundle.py"
+      - "scripts/verify_platform.sh"
       - ".github/workflows/cd.yaml"
+      - ".github/workflows/platform-verify.yaml"
   workflow_dispatch:
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
-  artifact-metadata: write
+  contents: read
 
 concurrency:
   group: production-image-publish
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   AWS_REGION: eu-west-1
   ECR_REPOSITORY: data-pipeline-app
 
 jobs:
+  platform-verify:
+    name: Shared platform verification
+    uses: ./.github/workflows/platform-verify.yaml
+    permissions:
+      contents: read
+
   publish:
-    name: Publish verified image and update GitOps manifest
+    name: Publish verified image and prepare GitOps candidate
+    needs: platform-verify
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,7 +65,13 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build or reuse an immutable source image
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@e07451d2e059ed86c2870430ea286b3a9e0bf241
+        with:
+          version: v0.72.0
+          cache: true
+
+      - name: Build or reuse an immutable source image after vulnerability gate
         id: image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -59,41 +79,69 @@ jobs:
         run: |
           set -euo pipefail
           image_uri="$ECR_REGISTRY/$ECR_REPOSITORY"
-          image_digest="$(aws ecr describe-images \
+          describe_json="$(mktemp)"
+          describe_err="$(mktemp)"
+          repository_mutability="$(aws ecr describe-repositories \
+            --repository-names "$ECR_REPOSITORY" \
+            --query 'repositories[0].imageTagMutability' \
+            --output text)"
+          test "$repository_mutability" = "IMMUTABLE" || {
+            echo "::error::ECR repository must enforce immutable tags before CD can trust SHA tag provenance."
+            exit 1
+          }
+
+          set +e
+          aws ecr describe-images \
             --repository-name "$ECR_REPOSITORY" \
             --image-ids imageTag="$IMAGE_TAG" \
-            --query 'imageDetails[0].imageDigest' \
-            --output text 2>/dev/null || true)"
+            --output json >"$describe_json" 2>"$describe_err"
+          describe_status="$?"
+          set -e
 
-          if [ -z "$image_digest" ] || [ "$image_digest" = "None" ]; then
+          if [ "$describe_status" -eq 0 ]; then
+            image_digest="$(jq -r '.imageDetails[0].imageDigest // empty' "$describe_json")"
+            test -n "$image_digest" || {
+              echo "::error::Existing ECR tag has no image digest."
+              exit 1
+            }
+            docker pull "$image_uri@$image_digest"
+            registry_image_id="$(docker image inspect --format '{{.Id}}' "$image_uri@$image_digest")"
+            trivy image --image-src docker --ignorefile .trivyignore --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL \
+              --scanners vuln "$image_uri@$image_digest"
+            publication_mode="reused-existing-tag"
+          elif grep -q "ImageNotFoundException" "$describe_err"; then
             docker build --pull --tag "$image_uri:$IMAGE_TAG" ./app
+            local_image_id="$(docker image inspect --format '{{.Id}}' "$image_uri:$IMAGE_TAG")"
+            trivy image --image-src docker --ignorefile .trivyignore --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL \
+              --scanners vuln "$image_uri:$IMAGE_TAG"
             docker push "$image_uri:$IMAGE_TAG"
             image_digest="$(aws ecr describe-images \
               --repository-name "$ECR_REPOSITORY" \
               --image-ids imageTag="$IMAGE_TAG" \
               --query 'imageDetails[0].imageDigest' \
               --output text)"
-          else
             docker pull "$image_uri@$image_digest"
-            docker tag "$image_uri@$image_digest" "$image_uri:$IMAGE_TAG"
+            registry_image_id="$(docker image inspect --format '{{.Id}}' "$image_uri@$image_digest")"
+            test "$local_image_id" = "$registry_image_id" || {
+              echo "::error::Registry digest does not match the exact local image that passed vulnerability scanning."
+              exit 1
+            }
+            publication_mode="scanned-before-push"
+          else
+            echo "::error::Could not determine immutable tag state in ECR."
+            cat "$describe_err" >&2
+            exit "$describe_status"
           fi
 
-          test "$image_digest" != "None"
-          test -n "$image_digest"
+          case "$image_digest" in
+            sha256:????????????????????????????????????????????????????????????????) ;;
+            *) echo "::error::ECR returned an invalid digest: $image_digest"; exit 1 ;;
+          esac
+
           printf 'uri=%s\n' "$image_uri" >> "$GITHUB_OUTPUT"
           printf 'digest=%s\n' "$image_digest" >> "$GITHUB_OUTPUT"
           printf 'reference=%s@%s\n' "$image_uri" "$image_digest" >> "$GITHUB_OUTPUT"
-
-      - name: Install Trivy
-        uses: aquasecurity/setup-trivy@e07451d2e059ed86c2870430ea286b3a9e0bf241
-        with:
-          version: v0.72.0
-          cache: true
-
-      - name: Enforce the production image vulnerability policy
-        run: >-
-          trivy image --ignorefile .trivyignore --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL
-          --scanners vuln "${{ steps.image.outputs.reference }}"
+          printf 'publication_mode=%s\n' "$publication_mode" >> "$GITHUB_OUTPUT"
 
       - name: Prepare release evidence directory
         run: mkdir -p release
@@ -106,61 +154,122 @@ jobs:
           output-file: release/data-pipeline-app.sbom.spdx.json
           artifact-name: data-pipeline-app-sbom
 
-      - name: Update production manifest
+      - name: Prepare deterministic GitOps release candidate
         env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
+          IMAGE_URI: ${{ steps.image.outputs.uri }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
         run: |
-          python - <<'PY'
-          from pathlib import Path
-          import os
+          python scripts/prepare_release_candidate.py \
+            --source-revision "${{ github.sha }}" \
+            --image-name "$IMAGE_URI" \
+            --image-digest "$IMAGE_DIGEST" \
+            --manifest-path k8s/overlays/prod/kustomization.yaml \
+            --output-dir release/candidate
 
-          manifest = Path("k8s/overlays/prod/kustomization.yaml")
-          lines = manifest.read_text().splitlines()
-          registry = f"{os.environ['ECR_REGISTRY']}/{os.environ['ECR_REPOSITORY']}"
-          changed = {"newName": False, "newTag": False}
-
-          for index, line in enumerate(lines):
-              if line.strip().startswith("newName:"):
-                  lines[index] = f"    newName: {registry}"
-                  changed["newName"] = True
-              elif line.strip().startswith("newTag:"):
-                  lines[index] = f"    newTag: {os.environ['IMAGE_TAG']}"
-                  changed["newTag"] = True
-
-          if not all(changed.values()):
-              raise SystemExit(f"Could not update image fields: {changed}")
-          manifest.write_text("\n".join(lines) + "\n")
-          PY
-
-      - name: Validate updated production manifest
-        run: kubectl kustomize k8s/overlays/prod > /tmp/rendered-production.yaml
-
-      - name: Commit immutable GitOps image reference
-        id: gitops
+      - name: Validate rendered release candidate
         env:
-          IMAGE_TAG: ${{ github.sha }}
+          IMAGE_URI: ${{ steps.image.outputs.uri }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
         run: |
           set -euo pipefail
-          if ! git diff --quiet -- k8s/overlays/prod/kustomization.yaml; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add -- k8s/overlays/prod/kustomization.yaml
-            git commit -m "chore(deploy): update image to $IMAGE_TAG [skip ci]"
-            git push origin HEAD:main
-          fi
-          printf 'revision=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          candidate_root="$(mktemp -d)"
+          cp -R k8s "$candidate_root/k8s"
+          cp release/candidate/prod-kustomization.yaml "$candidate_root/k8s/overlays/prod/kustomization.yaml"
+          kubectl kustomize "$candidate_root/k8s/overlays/prod" > release/rendered-production.yaml
+          python scripts/prepare_release_candidate.py \
+            --source-revision "${{ github.sha }}" \
+            --image-name "$IMAGE_URI" \
+            --image-digest "$IMAGE_DIGEST" \
+            --manifest-path k8s/overlays/prod/kustomization.yaml \
+            --rendered-manifest-path release/rendered-production.yaml \
+            --output-dir release/candidate
+
+      - name: Confirm production manifest was not changed
+        run: |
+          git diff --exit-code -- k8s/overlays/prod/kustomization.yaml
+
+      - name: Prepare deterministic validation release candidate
+        env:
+          IMAGE_URI: ${{ steps.image.outputs.uri }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          python scripts/prepare_release_candidate.py \
+            --candidate-target validation \
+            --source-revision "${{ github.sha }}" \
+            --image-name "$IMAGE_URI" \
+            --image-digest "$IMAGE_DIGEST" \
+            --manifest-path k8s/overlays/validation/kustomization.yaml \
+            --output-dir release/validation-candidate
+
+      - name: Validate rendered validation release candidate
+        env:
+          IMAGE_URI: ${{ steps.image.outputs.uri }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          candidate_root="$(mktemp -d)"
+          cp -R k8s "$candidate_root/k8s"
+          cp release/validation-candidate/validation-kustomization.yaml \
+            "$candidate_root/k8s/overlays/validation/kustomization.yaml"
+          kubectl kustomize "$candidate_root/k8s/overlays/validation" \
+            > release/rendered-validation.yaml
+          python scripts/prepare_release_candidate.py \
+            --candidate-target validation \
+            --source-revision "${{ github.sha }}" \
+            --image-name "$IMAGE_URI" \
+            --image-digest "$IMAGE_DIGEST" \
+            --manifest-path k8s/overlays/validation/kustomization.yaml \
+            --rendered-manifest-path release/rendered-validation.yaml \
+            --output-dir release/validation-candidate
+
+      - name: Confirm validation manifest was not changed
+        run: |
+          git diff --exit-code -- k8s/overlays/validation/kustomization.yaml
 
       - name: Generate release evidence
         run: >-
           python scripts/write_release_evidence.py
           --source-revision "${{ github.sha }}"
-          --gitops-revision "${{ steps.gitops.outputs.revision }}"
           --image-name "${{ steps.image.outputs.uri }}"
           --image-digest "${{ steps.image.outputs.digest }}"
           --sbom-path release/data-pipeline-app.sbom.spdx.json
           --manifest-path k8s/overlays/prod/kustomization.yaml
+          --candidate-metadata-path release/candidate/release-candidate.json
+          --publication-mode "${{ steps.image.outputs.publication_mode }}"
           --output release/release-evidence.json
+
+      - name: Generate validation release evidence
+        run: >-
+          python scripts/write_release_evidence.py
+          --source-revision "${{ github.sha }}"
+          --image-name "${{ steps.image.outputs.uri }}"
+          --image-digest "${{ steps.image.outputs.digest }}"
+          --sbom-path release/data-pipeline-app.sbom.spdx.json
+          --manifest-path k8s/overlays/validation/kustomization.yaml
+          --candidate-metadata-path release/validation-candidate/release-candidate.json
+          --publication-mode "${{ steps.image.outputs.publication_mode }}"
+          --output release/validation-release-evidence.json
+
+      - name: Verify candidate evidence consistency before signing
+        run: >-
+          python scripts/verify_release_bundle.py
+          --candidate-dir release/candidate
+          --release-evidence release/release-evidence.json
+          --sbom release/data-pipeline-app.sbom.spdx.json
+          --current-manifest k8s/overlays/prod/kustomization.yaml
+          --source-revision "${{ github.sha }}"
+          --image-name "${{ steps.image.outputs.uri }}"
+
+      - name: Verify validation candidate evidence consistency before signing
+        run: >-
+          python scripts/verify_release_bundle.py
+          --candidate-target validation
+          --candidate-dir release/validation-candidate
+          --release-evidence release/validation-release-evidence.json
+          --sbom release/data-pipeline-app.sbom.spdx.json
+          --current-manifest k8s/overlays/validation/kustomization.yaml
+          --source-revision "${{ github.sha }}"
+          --image-name "${{ steps.image.outputs.uri }}"
 
       - name: Attest image SBOM
         uses: actions/attest@v4
@@ -168,13 +277,49 @@ jobs:
           subject-name: ${{ steps.image.outputs.uri }}
           subject-digest: ${{ steps.image.outputs.digest }}
           sbom-path: release/data-pipeline-app.sbom.spdx.json
-          push-to-registry: false
+          push-to-registry: true
           create-storage-record: false
 
       - name: Attest release evidence provenance
         uses: actions/attest@v4
         with:
           subject-path: release/release-evidence.json
+
+      - name: Attest validation release evidence provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: release/validation-release-evidence.json
+
+      - name: Verify production release attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python scripts/verify_release_bundle.py
+          --candidate-dir release/candidate
+          --release-evidence release/release-evidence.json
+          --sbom release/data-pipeline-app.sbom.spdx.json
+          --current-manifest k8s/overlays/prod/kustomization.yaml
+          --source-revision "${{ github.sha }}"
+          --image-name "${{ steps.image.outputs.uri }}"
+          --verify-attestation
+          --verify-image-attestation
+          > release/production-verification.json
+
+      - name: Verify validation release attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python scripts/verify_release_bundle.py
+          --candidate-target validation
+          --candidate-dir release/validation-candidate
+          --release-evidence release/validation-release-evidence.json
+          --sbom release/data-pipeline-app.sbom.spdx.json
+          --current-manifest k8s/overlays/validation/kustomization.yaml
+          --source-revision "${{ github.sha }}"
+          --image-name "${{ steps.image.outputs.uri }}"
+          --verify-attestation
+          --verify-image-attestation
+          > release/validation-verification.json
 
       - name: Upload release evidence
         uses: actions/upload-artifact@v4

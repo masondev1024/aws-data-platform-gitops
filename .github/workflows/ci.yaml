@@ -2,23 +2,29 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [dev, main]
     paths:
       - "app/**"
+      - "agentic_ops/**"
       - "k8s/**"
       - "loadtest/**"
       - "scripts/**"
       - "terraform/**"
+      - "platform/**"
+      - "Jenkinsfile"
       - "docs/**"
       - ".github/workflows/**"
   push:
-    branches: [main]
+    branches: [dev, main]
     paths:
       - "app/**"
+      - "agentic_ops/**"
       - "k8s/**"
       - "loadtest/**"
       - "scripts/**"
       - "terraform/**"
+      - "platform/**"
+      - "Jenkinsfile"
       - "docs/**"
       - ".github/workflows/**"
 
@@ -26,54 +32,29 @@ permissions:
   contents: read
 
 jobs:
-  app-tests:
-    name: Application tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: app/requirements*.txt
-
-      - name: Install dependencies
-        run: python -m pip install -r app/requirements-dev.txt
-
-      - name: Run tests
-        run: python -m pytest -q app/tests scripts/tests
+  platform-verify:
+    name: Shared platform verification
+    uses: ./.github/workflows/platform-verify.yaml
+    permissions:
+      contents: read
 
   docker-build:
     name: Docker build
-    needs: app-tests
+    needs: platform-verify
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - name: Build image
         run: docker build --pull --tag data-pipeline-app:ci ./app
 
-  kubernetes-manifests:
-    name: Kubernetes manifest validation
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Render production overlay
-        run: kubectl kustomize k8s/overlays/prod > /tmp/rendered-manifests.yaml
-      - name: Render validation overlay
-        run: kubectl kustomize k8s/overlays/validation > /tmp/rendered-validation-manifests.yaml
-      - name: Ensure the rendered manifest is non-empty
-        run: test -s /tmp/rendered-manifests.yaml
-      - name: Assert D2C release controls are rendered
-        run: |
-          grep -F "data-pipeline-schema-migration" /tmp/rendered-manifests.yaml
-          grep -F "canary-apply-outbox-parity" /tmp/rendered-manifests.yaml
-          grep -F "ALLOW_FAILURE_DRILL" k8s/overlays/validation/patch-rollout.yaml
-          grep -F "value: validation" /tmp/rendered-validation-manifests.yaml
-
   loadtest-script:
     name: k6 load-test script validation
+    needs: platform-verify
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - name: Inspect k6 scenarios and thresholds
@@ -81,19 +62,3 @@ jobs:
           docker run --rm -i
           grafana/k6@sha256:5221b620a4f874faff6e32ba597aa667c058391fe4898b1c6f6377f062c6cdec
           inspect - < loadtest/raffle.js
-
-  terraform:
-    name: Terraform validation
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: terraform
-    steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
-      - name: Initialize providers without a backend
-        run: terraform init -backend=false -input=false
-      - name: Check formatting
-        run: terraform fmt -check -recursive
-      - name: Validate configuration
-        run: terraform validate
