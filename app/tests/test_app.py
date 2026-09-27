@@ -259,6 +259,16 @@ def test_apply_persists_entry_and_outbox_event_in_one_transaction(client):
     assert connection.close_count == 1
 
     statements = [statement for statement, _ in cursor.executed]
+    eligibility_query, eligibility_args = next(
+        (sql, args) for sql, args in cursor.executed if "FROM raffle_items" in sql
+    )
+    assert "end_time > UTC_TIMESTAMP()" in eligibility_query
+    assert "is_drawn = FALSE" in eligibility_query
+    assert eligibility_query.endswith("FOR UPDATE")
+    assert eligibility_args == (1,)
+    assert statements.index(eligibility_query) < next(
+        i for i, sql in enumerate(statements) if "INSERT INTO raffle_entries" in sql
+    )
     assert any("INSERT INTO raffle_entries" in statement for statement in statements)
     outbox_statement, outbox_parameters = next(
         (statement, parameters)
@@ -271,6 +281,23 @@ def test_apply_persists_entry_and_outbox_event_in_one_transaction(client):
     assert event["event_version"] == 1
     assert event["data"] == {"entry_id": 99, "item_id": 1, "user_id": 7}
     UUID(event["event_id"])
+
+
+def test_closed_or_missing_item_creates_neither_entry_nor_outbox(client):
+    headers = csrf_headers(client)
+    with client.session_transaction() as current_session:
+        current_session["user_id"] = "loadtest-user"
+    cursor = FakeCursor()
+    connection = FakeConnection(cursor)
+    with patch.object(cursor, "fetchone", side_effect=[{"id": 7}, None]), \
+            patch("app.get_db_connection", return_value=connection):
+        response = client.post("/api/apply", json={"item_id": 1}, headers=headers)
+    assert response.status_code == 400
+    assert response.get_json()["message"] == "item_not_open"
+    assert connection.commit_count == 0
+    assert connection.rollback_count == 1
+    assert connection.close_count == 1
+    assert not any("INSERT INTO" in sql for sql, _ in cursor.executed)
 
 
 def test_outbox_failure_drill_rolls_back_before_an_orphaned_entry_can_commit(client, monkeypatch):
