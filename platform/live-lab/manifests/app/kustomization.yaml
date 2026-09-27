@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: platform-validation
+resources:
+  - ../../../../k8s/base
+patches:
+  - path: patches/patch-migration-live-lab.yaml
+  - path: patches/patch-cronjob-live-lab.yaml
+  - path: patches/patch-ingress-live-lab.yaml
+  - target:
+      group: argoproj.io
+      version: v1alpha1
+      kind: AnalysisTemplate
+      name: data-pipeline-canary
+    path: patches/patch-analysis-template-prometheus-url.yaml
+  - target:
+      group: argoproj.io
+      version: v1alpha1
+      kind: Rollout
+      name: data-pipeline-rollout
+    path: patches/patch-rollout-live-lab.yaml

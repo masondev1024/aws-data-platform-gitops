@@ -1,0 +1,17 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: data-pipeline-validation
+  namespace: argocd
+spec:
+  project: kyobo-platform-validation
+  source:
+    repoURL: https://github.com/masondev1024/aws-data-platform-gitops
+    targetRevision: main
+    path: k8s/overlays/validation
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: platform-validation
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=false

@@ -1,7 +1,6 @@
 """D2C raffle application with transaction-safe event production."""
 
 from datetime import datetime, timedelta, timezone
-import hmac
 import json
 import os
 import re
@@ -10,10 +9,13 @@ from time import perf_counter
 from uuid import uuid4
 
 import pymysql
-from flask import Flask, Response, g, jsonify, redirect, render_template, request, session, url_for
-from flask_wtf.csrf import CSRFProtect
+from flask import Flask, Response, abort, g, jsonify, redirect, render_template, request, session, url_for
+from flask_wtf.csrf import CSRFProtect, generate_csrf
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 from werkzeug.security import check_password_hash, generate_password_hash
+
+from db import db_tls_options
+from catalog_cache import CatalogBusy, CatalogCache
 
 
 PRODUCTION_ENVIRONMENTS = frozenset({"production", "prod"})
@@ -34,6 +36,16 @@ def _trusted_hosts() -> list[str] | None:
     return hosts or None
 
 
+def _host_matches(host: str, pattern: str) -> bool:
+    """Match exact DNS hosts or an explicit left-most wildcard suffix."""
+    normalized_host = host.partition(":")[0].lower().rstrip(".")
+    normalized_pattern = pattern.lower().rstrip(".")
+    if normalized_pattern.startswith("*."):
+        suffix = normalized_pattern[1:]
+        return normalized_host.endswith(suffix) and normalized_host != suffix[1:]
+    return normalized_host == normalized_pattern
+
+
 app = Flask(__name__)
 configured_secret_key = os.environ.get("SECRET_KEY")
 if _is_production() and not configured_secret_key:
@@ -48,15 +60,20 @@ app.config.from_mapping(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=_is_production(),
-    TRUSTED_HOSTS=_trusted_hosts(),
+    # Health checks come from Pod/ALB IPs rather than the public ALB DNS name.
+    # Enforce allowed application hosts below, while keeping these three
+    # operator-only endpoints reachable for readiness and internal scraping.
+    TRUSTED_HOSTS=None,
+    LIVE_LAB_TRUSTED_HOSTS=_trusted_hosts(),
+    CATALOG_CACHE_TTL_SECONDS=float(os.environ.get("CATALOG_CACHE_TTL_SECONDS", "0")),
 )
 csrf = CSRFProtect(app)
 
 DB_WRITER_HOST = os.environ.get("DB_WRITER_HOST")
 DB_READER_HOST = os.environ.get("DB_READER_HOST")
 DB_NAME = os.environ.get("DB_NAME", "raffle_db")
-DB_USER = os.environ.get("DB_USER", "admin")
-DB_PASSWORD = os.environ.get("DB_PASSWORD")
+DB_USER = os.environ.get("DB_APP_USER", os.environ.get("DB_USER", "admin"))
+DB_PASSWORD = os.environ.get("DB_APP_PASSWORD", os.environ.get("DB_PASSWORD"))
 
 HTTP_REQUESTS = Counter(
     "raffle_http_requests",
@@ -78,6 +95,19 @@ RAFFLE_OUTBOX_EVENTS = Counter(
     "Transactional outbox event outcomes.",
     ("result",),
 )
+# Prometheus rate()/increase() cannot measure the first increment of a counter
+# series unless an earlier zero sample exists. Seed the bounded canary-gate
+# series so the first injected or real apply failure is observable immediately.
+HTTP_REQUESTS.labels("POST", "/api/apply", "503").inc(0)
+for apply_result in (
+    "success",
+    "unauthenticated",
+    "integrity_protection_rejected",
+    "duplicate",
+    "item_unavailable",
+    "database_error",
+):
+    RAFFLE_APPLY_REQUESTS.labels(apply_result).inc(0)
 DB_READINESS = Gauge(
     "raffle_db_readiness",
     "Whether the configured read database passed the latest readiness check.",
@@ -86,6 +116,16 @@ RAFFLE_APPLY_OUTBOX_PARITY_GAP = Gauge(
     "raffle_apply_outbox_parity_gap",
     "Accepted raffle entries created in the last window without a matching transactional outbox event; -1 means the database check failed.",
 )
+DB_CONNECT_DURATION = Histogram(
+    "raffle_db_connect_duration_seconds", "Database connection and TLS setup time.", ("role",),
+)
+CATALOG_LOAD_DURATION = Histogram(
+    "raffle_catalog_load_duration_seconds", "Catalogue database read including connection setup.",
+)
+CATALOG_CACHE_EVENTS = Counter(
+    "raffle_catalog_cache_events", "Public catalogue snapshot activity.", ("result",),
+)
+catalog_cache = CatalogCache(on_event=lambda result: CATALOG_CACHE_EVENTS.labels(result).inc())
 
 
 class OutboxTransactionFailure(Exception):
@@ -102,6 +142,15 @@ def _metric_route() -> str:
 @app.before_request
 def start_request_timer() -> None:
     g.request_started_at = perf_counter()
+
+
+@app.before_request
+def enforce_trusted_host() -> None:
+    allowed_hosts = app.config.get("LIVE_LAB_TRUSTED_HOSTS") or []
+    if not allowed_hosts or request.path in {"/healthz", "/readyz", "/metrics"}:
+        return
+    if not any(_host_matches(request.host, pattern) for pattern in allowed_hosts):
+        abort(400)
 
 
 @app.after_request
@@ -138,22 +187,26 @@ def add_security_headers(response):
 def get_db_connection(
     is_write: bool = False,
     *,
+    user: str | None = None,
+    password: str | None = None,
     connect_timeout: int = 5,
     read_timeout: int = 10,
     write_timeout: int = 10,
 ):
     """Route writes to the writer and reads to the replica endpoint."""
     host = DB_WRITER_HOST if is_write else DB_READER_HOST
-    return pymysql.connect(
-        host=host,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        database=DB_NAME,
-        connect_timeout=connect_timeout,
-        read_timeout=read_timeout,
-        write_timeout=write_timeout,
-        cursorclass=pymysql.cursors.DictCursor,
-    )
+    with DB_CONNECT_DURATION.labels("writer" if is_write else "reader").time():
+        return pymysql.connect(
+            host=host,
+            user=user or DB_USER,
+            password=password if password is not None else DB_PASSWORD,
+            database=DB_NAME,
+            connect_timeout=connect_timeout,
+            read_timeout=read_timeout,
+            write_timeout=write_timeout,
+            cursorclass=pymysql.cursors.DictCursor,
+            **db_tls_options(),
+        )
 
 
 def _json_object() -> dict | None:
@@ -183,11 +236,14 @@ def _rollback_quietly(connection) -> None:
         app.logger.exception("Database rollback failed")
 
 
-def _verify_password(stored_password: str, provided_password: str) -> tuple[bool, bool]:
-    """Return authentication result and whether a legacy plaintext hash needs upgrading."""
-    if stored_password.startswith(("pbkdf2:", "scrypt:")):
-        return check_password_hash(stored_password, provided_password), False
-    return hmac.compare_digest(stored_password, provided_password), True
+def _password_matches(stored_password: str, provided_password: str) -> bool:
+    """Verify only Werkzeug password hashes; malformed and legacy plaintext values fail closed."""
+    if not isinstance(stored_password, str) or not isinstance(provided_password, str):
+        return False
+    try:
+        return check_password_hash(stored_password, provided_password)
+    except (TypeError, ValueError):
+        return False
 
 
 def _is_duplicate_key_error(error: pymysql.err.IntegrityError) -> bool:
@@ -265,7 +321,9 @@ def readyz():
     connection = None
     DB_READINESS.set(0)
     try:
-        connection = get_db_connection(is_write=False)
+        # A read replica can be healthy while writes to the primary are not.
+        # Readiness gates user traffic on the writer, not only the replica.
+        connection = get_db_connection(is_write=True)
         with connection.cursor() as cursor:
             cursor.execute("SELECT 1")
     except (pymysql.MySQLError, OSError) as error:
@@ -291,9 +349,9 @@ def metrics():
     return Response(generate_latest(), content_type=CONTENT_TYPE_LATEST)
 
 
-@app.route("/")
-def index():
-    is_logged_in = "user_id" in session
+@CATALOG_LOAD_DURATION.time()
+def load_catalog_items():
+    """Load public rows; return request-owned data, never a session or response."""
     connection = get_db_connection(is_write=False)
     try:
         with connection.cursor() as cursor:
@@ -305,7 +363,24 @@ def index():
     for item in items:
         if isinstance(item["end_time"], datetime):
             item["end_time"] = item["end_time"].strftime("%Y-%m-%dT%H:%M:%S")
-    return render_template("index.html", items=items, is_logged_in=is_logged_in)
+    return items
+
+
+@app.route("/")
+def index():
+    try:
+        items = catalog_cache.get(
+            load_catalog_items, ttl=app.config["CATALOG_CACHE_TTL_SECONDS"],
+        )
+    except (CatalogBusy, pymysql.MySQLError, OSError) as error:
+        app.logger.warning("Catalogue temporarily unavailable: %s", type(error).__name__)
+        return jsonify({"status": "unavailable"}), 503
+    response = app.make_response(render_template(
+        "index.html", items=items, is_logged_in="user_id" in session,
+    ))
+    # CSRF and authentication are rendered for each request, not shared by the cache.
+    response.headers["Cache-Control"] = "private, no-store"
+    return response
 
 
 @app.route("/login")
@@ -416,15 +491,8 @@ def api_login():
 
             if not user:
                 return jsonify({"status": "error", "message": "아이디와 비밀번호를 확인해주세요."}), 401
-            password_matches, upgrade_legacy_password = _verify_password(user["password"], password)
-            if not password_matches:
+            if not _password_matches(user["password"], password):
                 return jsonify({"status": "error", "message": "아이디와 비밀번호를 확인해주세요."}), 401
-            if upgrade_legacy_password:
-                cursor.execute(
-                    "UPDATE users SET password = %s WHERE id = %s",
-                    (generate_password_hash(password), user["id"]),
-                )
-                connection.commit()
     except pymysql.MySQLError:
         _rollback_quietly(connection)
         app.logger.exception("User login failed because of a database error")
@@ -436,7 +504,9 @@ def api_login():
     session.clear()
     session.permanent = True
     session["user_id"] = username
-    return jsonify({"status": "success"})
+    # Clearing the session invalidates the pre-login CSRF token. Return a token
+    # bound to the authenticated session so clients can safely continue.
+    return jsonify({"status": "success", "csrf_token": generate_csrf()})
 
 
 @app.route("/api/logout", methods=["POST"])
@@ -466,6 +536,21 @@ def api_apply():
                 session.clear()
                 RAFFLE_APPLY_REQUESTS.labels("unauthenticated").inc()
                 return jsonify({"status": "error", "message": "login_required"}), 401
+
+            # Serialize eligibility with the draw worker's update of this item.
+            # Database UTC avoids host-clock drift at the closing boundary.
+            cursor.execute(
+                """
+                SELECT id FROM raffle_items
+                WHERE id = %s AND end_time > UTC_TIMESTAMP() AND is_drawn = FALSE
+                FOR UPDATE
+                """,
+                (item_id,),
+            )
+            if not cursor.fetchone():
+                connection.rollback()
+                RAFFLE_APPLY_REQUESTS.labels("item_unavailable").inc()
+                return jsonify({"status": "error", "message": "item_not_open"}), 400
 
             cursor.execute(
                 "INSERT INTO raffle_entries (user_id, item_id) VALUES (%s, %s)",

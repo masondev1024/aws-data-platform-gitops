@@ -26,4 +26,4 @@ spec:
             backend:
               service:
                 name: data-pipeline-svc-stable
-                port: { number: 80 }
+                port: { name: use-annotation }

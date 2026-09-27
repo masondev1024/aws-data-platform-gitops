@@ -1,0 +1,26 @@
+aws_region            = "ap-northeast-2"
+aws_account_id        = "000000000000"
+operator_cidr         = "203.0.113.10/32"
+operator_name         = "mason"
+approval_id           = "SS0-20260923-pending"
+session_id            = "kyobo-lab-0001"
+cost_budget_usd       = 5.50
+max_session_hours     = 3
+recovery_contact      = "operator-recovery"
+apply_approval_phrase = "PLAN_ONLY"
+availability_zones    = ["ap-northeast-2a", "ap-northeast-2c"]
+
+eks_kubernetes_version = "1.36"
+eks_node_instance_type = "m7i.xlarge"
+eks_node_min_size      = 2
+eks_node_desired_size  = 2
+eks_node_max_size      = 2
+
+db_username                            = "raffle_admin"
+db_master_password_secret_id           = "kyobo-live-lab/kyobo-lab-0001/mysql-master-password"
+db_master_password_secret_version_stage = "AWSCURRENT"
+db_password_wo_version                 = 1
+
+# COUNT is the default. Switch to BLOCK only after baseline traffic and Count
+# evidence have been captured for the same ALB.
+waf_enforcement_mode = "COUNT"

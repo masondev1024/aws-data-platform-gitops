@@ -1,5 +1,6 @@
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -82,6 +83,52 @@ def test_health_check_does_not_require_database(client):
     assert response.headers["X-Content-Type-Options"] == "nosniff"
 
 
+def test_catalogue_cache_does_not_share_csrf_tokens_or_authentication(monkeypatch):
+    monkeypatch.setitem(app.config, "CATALOG_CACHE_TTL_SECONDS", 1.0)
+    monkeypatch.setattr(app_module, "catalog_cache", app_module.CatalogCache())
+    calls = []
+    monkeypatch.setattr(app_module, "load_catalog_items", lambda: calls.append(True) or [])
+    app.config.update(TESTING=True, SECRET_KEY="test-secret", WTF_CSRF_ENABLED=True)
+    anonymous = app.test_client()
+    authenticated = app.test_client()
+    with authenticated.session_transaction() as session:
+        session["user_id"] = "member"
+    first = anonymous.get("/")
+    second = authenticated.get("/")
+    token = r'<meta name="csrf-token" content="([^"]+)">'
+    assert re.search(token, first.text)[1] != re.search(token, second.text)[1]
+    assert "MYPAGE" not in first.text
+    assert "MYPAGE" in second.text
+    assert first.headers["Cache-Control"] == "private, no-store"
+    assert len(calls) == 1
+
+
+def test_catalogue_database_failure_returns_unavailable(client, monkeypatch):
+    monkeypatch.setitem(app.config, "CATALOG_CACHE_TTL_SECONDS", 0)
+    def fail():
+        raise app_module.pymysql.OperationalError("database unavailable")
+    monkeypatch.setattr(app_module, "load_catalog_items", fail)
+    response = client.get("/")
+    assert response.status_code == 503
+    assert "database unavailable" not in response.text
+
+
+def test_health_check_is_reachable_with_load_balancer_probe_host(client, monkeypatch):
+    monkeypatch.setitem(app.config, "LIVE_LAB_TRUSTED_HOSTS", ["*.ap-northeast-2.elb.amazonaws.com"])
+    response = client.get("/healthz", headers={"Host": "10.72.1.20:8080"})
+    assert response.status_code == 200
+
+
+def test_trusted_host_allows_only_the_configured_regional_load_balancer(client, monkeypatch):
+    monkeypatch.setitem(app.config, "LIVE_LAB_TRUSTED_HOSTS", ["*.ap-northeast-2.elb.amazonaws.com"])
+    allowed = client.get("/signup", headers={"Host": "lab-123.ap-northeast-2.elb.amazonaws.com"})
+    wrong_region_order = client.get("/signup", headers={"Host": "lab-123.elb.ap-northeast-2.amazonaws.com"})
+    denied = client.get("/signup", headers={"Host": "attacker.example.net"})
+    assert allowed.status_code == 200
+    assert wrong_region_order.status_code == 400
+    assert denied.status_code == 400
+
+
 def test_metrics_endpoint_exposes_bounded_http_metrics(client):
     client.get("/healthz")
 
@@ -94,6 +141,24 @@ def test_metrics_endpoint_exposes_bounded_http_metrics(client):
     assert 'route="/healthz"' in body
     assert "raffle_http_request_duration_seconds" in body
     assert "raffle_outbox_events_total" in body
+
+
+def test_new_process_preinitializes_canary_failure_and_apply_counter_series():
+    code = (
+        "import sys; sys.path.insert(0, 'app'); import app; "
+        "from prometheus_client import generate_latest; "
+        "print(generate_latest().decode())"
+    )
+    output = subprocess.check_output(
+        [sys.executable, "-c", code],
+        cwd=Path(__file__).resolve().parents[2],
+        text=True,
+    )
+    metrics = set(output.splitlines())
+
+    assert 'raffle_http_requests_total{method="POST",route="/api/apply",status="503"} 0.0' in metrics
+    assert 'raffle_apply_requests_total{result="success"} 0.0' in metrics
+    assert 'raffle_apply_requests_total{result="integrity_protection_rejected"} 0.0' in metrics
 
 
 def test_metrics_exposes_database_backed_outbox_parity(client, monkeypatch):
@@ -135,11 +200,24 @@ def test_metrics_fails_closed_when_production_writer_endpoint_is_missing(client,
 
 
 def test_readiness_check_returns_service_unavailable_when_database_is_down(client):
-    with patch("app.get_db_connection", side_effect=app_module.pymysql.OperationalError("down")):
+    with patch("app.get_db_connection", side_effect=app_module.pymysql.OperationalError("down")) as connect:
         response = client.get("/readyz")
 
     assert response.status_code == 503
     assert response.get_json() == {"status": "not_ready"}
+    assert connect.call_args.kwargs == {"is_write": True}
+
+
+def test_readiness_requires_writer_endpoint_not_only_reader(client):
+    cursor = FakeCursor(fetchone_result={"ready": 1})
+    connection = FakeConnection(cursor)
+
+    with patch("app.get_db_connection", return_value=connection) as connect:
+        response = client.get("/readyz")
+
+    assert response.status_code == 200
+    assert connect.call_args.kwargs == {"is_write": True}
+    assert connection.close_count == 1
 
 
 def test_apply_rejects_missing_csrf_token(client):
@@ -181,6 +259,16 @@ def test_apply_persists_entry_and_outbox_event_in_one_transaction(client):
     assert connection.close_count == 1
 
     statements = [statement for statement, _ in cursor.executed]
+    eligibility_query, eligibility_args = next(
+        (sql, args) for sql, args in cursor.executed if "FROM raffle_items" in sql
+    )
+    assert "end_time > UTC_TIMESTAMP()" in eligibility_query
+    assert "is_drawn = FALSE" in eligibility_query
+    assert eligibility_query.endswith("FOR UPDATE")
+    assert eligibility_args == (1,)
+    assert statements.index(eligibility_query) < next(
+        i for i, sql in enumerate(statements) if "INSERT INTO raffle_entries" in sql
+    )
     assert any("INSERT INTO raffle_entries" in statement for statement in statements)
     outbox_statement, outbox_parameters = next(
         (statement, parameters)
@@ -193,6 +281,23 @@ def test_apply_persists_entry_and_outbox_event_in_one_transaction(client):
     assert event["event_version"] == 1
     assert event["data"] == {"entry_id": 99, "item_id": 1, "user_id": 7}
     UUID(event["event_id"])
+
+
+def test_closed_or_missing_item_creates_neither_entry_nor_outbox(client):
+    headers = csrf_headers(client)
+    with client.session_transaction() as current_session:
+        current_session["user_id"] = "loadtest-user"
+    cursor = FakeCursor()
+    connection = FakeConnection(cursor)
+    with patch.object(cursor, "fetchone", side_effect=[{"id": 7}, None]), \
+            patch("app.get_db_connection", return_value=connection):
+        response = client.post("/api/apply", json={"item_id": 1}, headers=headers)
+    assert response.status_code == 400
+    assert response.get_json()["message"] == "item_not_open"
+    assert connection.commit_count == 0
+    assert connection.rollback_count == 1
+    assert connection.close_count == 1
+    assert not any("INSERT INTO" in sql for sql, _ in cursor.executed)
 
 
 def test_outbox_failure_drill_rolls_back_before_an_orphaned_entry_can_commit(client, monkeypatch):
@@ -214,9 +319,10 @@ def test_outbox_failure_drill_rolls_back_before_an_orphaned_entry_can_commit(cli
     assert not any("INSERT INTO raffle_outbox_events" in statement for statement, _ in cursor.executed)
 
 
-def test_legacy_plaintext_password_is_rehashed_after_a_successful_login(client):
+@pytest.mark.parametrize("stored_password", ["legacy-password", "not-a-valid-werkzeug-hash"])
+def test_plaintext_or_invalid_password_hash_is_rejected_without_migration_write(client, stored_password):
     headers = csrf_headers(client)
-    cursor = FakeCursor(fetchone_result={"id": 7, "password": "legacy-password"})
+    cursor = FakeCursor(fetchone_result={"id": 7, "password": stored_password})
     connection = FakeConnection(cursor)
 
     with patch("app.get_db_connection", return_value=connection):
@@ -226,15 +332,9 @@ def test_legacy_plaintext_password_is_rehashed_after_a_successful_login(client):
             headers=headers,
         )
 
-    assert response.status_code == 200
-    update_parameters = next(
-        parameters
-        for statement, parameters in cursor.executed
-        if statement.startswith("UPDATE users SET password")
-    )
-    assert update_parameters[1] == 7
-    assert update_parameters[0] != "legacy-password"
-    assert connection.commit_count == 1
+    assert response.status_code == 401
+    assert connection.commit_count == 0
+    assert not any("UPDATE users SET password" in statement for statement, _ in cursor.executed)
 
 
 def test_hashed_password_does_not_need_a_migration_write(client):
@@ -268,3 +368,26 @@ def test_signup_page_is_available_without_database(client):
     assert response.status_code == 200
     assert "회원가입" in response.get_data(as_text=True)
     assert "csrf-token" in response.get_data(as_text=True)
+
+
+def test_login_returns_fresh_csrf_token_for_cleared_session(client, monkeypatch):
+    headers = csrf_headers(client)
+    cursor = FakeCursor(fetchone_result={"id": 7, "password": generate_password_hash("test-password")})
+    connection = FakeConnection(cursor)
+    monkeypatch.setattr(app_module, "get_db_connection", lambda **kwargs: connection)
+
+    response = client.post(
+        "/api/login",
+        json={"username": "member01", "password": "test-password"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    fresh_token = response.get_json()["csrf_token"]
+    assert fresh_token
+    apply_response = client.post(
+        "/api/apply",
+        json={"item_id": 1},
+        headers={"X-CSRFToken": fresh_token},
+    )
+    assert apply_response.status_code == 200

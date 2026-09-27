@@ -1,0 +1,15 @@
+- op: replace
+  path: /spec/metrics/0/provider/prometheus/address
+  value: http://live-lab-observability-prometheus.monitoring.svc.cluster.local:9090
+- op: replace
+  path: /spec/metrics/1/provider/prometheus/address
+  value: http://live-lab-observability-prometheus.monitoring.svc.cluster.local:9090
+- op: replace
+  path: /spec/metrics/2/provider/prometheus/address
+  value: http://live-lab-observability-prometheus.monitoring.svc.cluster.local:9090
+- op: replace
+  path: /spec/metrics/3/provider/prometheus/address
+  value: http://live-lab-observability-prometheus.monitoring.svc.cluster.local:9090
+- op: replace
+  path: /spec/metrics/4/provider/prometheus/address
+  value: http://live-lab-observability-prometheus.monitoring.svc.cluster.local:9090

@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: raffle-config
+  namespace: platform-validation
+data:
+  DB_WRITER_HOST: __DB_WRITER_HOST__
+  DB_READER_HOST: __DB_READER_HOST__
+  DB_REQUIRE_TLS: "true"
+  DB_SSL_CA: /etc/rds-ca/global-bundle.pem
+  DB_NAME: raffle_db
+  DEPLOYMENT_TIER: validation
+  TRUSTED_HOSTS: "*.ap-northeast-2.elb.amazonaws.com"

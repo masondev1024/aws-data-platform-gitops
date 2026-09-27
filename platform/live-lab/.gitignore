@@ -1,0 +1,3 @@
+evidence/*
+!evidence/schema.json
+secrets/*

@@ -1,14 +1,42 @@
-apiVersion: argoproj.io/v1alpha1
-kind: Rollout
-metadata:
-  name: data-pipeline-rollout
-spec:
-  template:
-    spec:
-      containers:
-        - name: app-container
-          env:
-            - name: DEPLOYMENT_TIER
-              value: validation
-            - name: ALLOW_FAILURE_DRILL
-              value: "false"
+# JSON patches preserve CRD container fields without an OpenAPI merge schema.
+- op: test
+  path: /spec/template/spec/containers/0/name
+  value: app-container
+- op: test
+  path: /spec/template/spec/containers/0/env/1/name
+  value: DEPLOYMENT_TIER
+- op: replace
+  path: /spec/template/spec/containers/0/env/1/value
+  value: validation
+- op: add
+  path: /spec/template/spec/containers/0/env/-
+  value:
+    name: ALLOW_FAILURE_DRILL
+    value: "false"
+- op: add
+  path: /spec/template/spec/containers/0/volumeMounts
+  value:
+    - name: rds-ca-bundle
+      mountPath: /etc/rds-ca
+      readOnly: true
+- op: add
+  path: /spec/template/spec/containers/0/resources/limits
+  value:
+    cpu: "500m"
+    memory: "768Mi"
+- op: add
+  path: /spec/template/spec/containers/0/readinessProbe/httpGet/httpHeaders
+  value:
+    - name: Host
+      value: live-lab.invalid
+- op: add
+  path: /spec/template/spec/containers/0/livenessProbe/httpGet/httpHeaders
+  value:
+    - name: Host
+      value: live-lab.invalid
+- op: add
+  path: /spec/template/spec/volumes
+  value:
+    - name: rds-ca-bundle
+      configMap:
+        name: rds-ca-bundle

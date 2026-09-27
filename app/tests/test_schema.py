@@ -17,6 +17,9 @@ def test_outbox_schema_has_one_event_per_raffle_entry_and_an_unpublished_index()
     assert "UNIQUE KEY unique_raffle_entry_event (event_type, aggregate_id)" in schema_definition
     assert "KEY idx_raffle_outbox_unpublished (published_at, created_at)" in schema_definition
     assert "KEY idx_raffle_entries_entry_time (entry_time)" in schema_definition
+    assert "CREATE TABLE IF NOT EXISTS live_lab_cohort_markers" in schema_definition
+    assert "FOREIGN KEY (entry_id) REFERENCES raffle_entries(id)" in schema_definition
+    assert "FOREIGN KEY (event_id) REFERENCES raffle_outbox_events(event_id)" in schema_definition
 
 
 def test_schema_migrations_are_additive_and_do_not_seed_production_rows():
@@ -32,6 +35,22 @@ def test_schema_migrations_are_additive_and_do_not_seed_production_rows():
     assert cursor.executemany_calls == []
 
 
+def test_explicit_synthetic_seed_uses_a_future_database_clock_deadline():
+    cursor = FakeCursor(fetchone_result={"cnt": 0})
+    schema.apply_schema_migrations(FakeConnection(cursor), seed_sample_data=True)
+    [(sql, rows)] = cursor.executemany_calls
+    assert "DATE_ADD(UTC_TIMESTAMP(), INTERVAL 1 DAY)" in sql
+    assert len(rows) == 2
+    assert all(len(row) == 3 for row in rows)
+
+
+def test_repeated_seed_does_not_reopen_existing_items():
+    cursor = FakeCursor(fetchone_result={"cnt": 1})
+    schema.apply_schema_migrations(FakeConnection(cursor), seed_sample_data=True)
+    assert cursor.executemany_calls == []
+    assert not any("UPDATE raffle_items" in sql for sql, _ in cursor.executed)
+
+
 def test_invalid_database_identifier_is_rejected_before_opening_a_connection():
     with patch("schema.pymysql.connect") as connect:
         with pytest.raises(ValueError, match="DB_NAME"):
@@ -43,3 +62,48 @@ def test_invalid_database_identifier_is_rejected_before_opening_a_connection():
             )
 
     connect.assert_not_called()
+
+
+def test_application_user_is_limited_to_runtime_dml_and_bootstrap_is_repeatable():
+    cursor = FakeCursor()
+    connection = FakeConnection(cursor)
+
+    schema.ensure_application_user(
+        connection,
+        username="raffle_app",
+        password="synthetic-test-password",
+        database_name="raffle_db",
+    )
+
+    # PyMySQL applies Python-style `%s` interpolation before sending the query.
+    # Verify the account host wildcard survives that interpolation unchanged.
+    rendered_parameterized_sql = [
+        statement % parameters
+        for statement, parameters in cursor.executed
+        if parameters
+    ]
+
+    statements = [statement for statement, _ in cursor.executed]
+    assert any("CREATE USER IF NOT EXISTS 'raffle_app'@'%'" in sql for sql in rendered_parameterized_sql)
+    assert any("ALTER USER 'raffle_app'@'%'" in sql for sql in rendered_parameterized_sql)
+    assert any(
+        "GRANT SELECT, INSERT, UPDATE ON `raffle_db`.*" in sql
+        for sql in statements
+    )
+    assert not any("GRANT ALL" in sql or "DELETE" in sql for sql in statements)
+    assert connection.commit_count == 1
+
+
+def test_invalid_application_username_is_rejected_before_sql_execution():
+    cursor = FakeCursor()
+    connection = FakeConnection(cursor)
+
+    with pytest.raises(ValueError, match="DB_APP_USER"):
+        schema.ensure_application_user(
+            connection,
+            username="bad'user",
+            password="synthetic-test-password",
+            database_name="raffle_db",
+        )
+
+    assert cursor.executed == []

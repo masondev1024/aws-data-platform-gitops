@@ -2,13 +2,13 @@ name: CodeQL
 
 on:
   pull_request:
-    branches: [main]
+    branches: [dev, main]
     paths:
       - "app/**"
       - "scripts/**"
       - ".github/workflows/codeql.yaml"
   push:
-    branches: [main]
+    branches: [dev, main]
     paths:
       - "app/**"
       - "scripts/**"

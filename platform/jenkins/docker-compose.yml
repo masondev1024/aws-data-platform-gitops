@@ -1,0 +1,63 @@
+services:
+  controller:
+    build:
+      context: .
+      dockerfile: Dockerfile.controller
+    image: develope-project/jenkins-controller:2.568.3-jdk21-local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      JAVA_OPTS: >-
+        -Djenkins.install.runSetupWizard=false
+      JENKINS_OPTS: "--httpListenAddress=0.0.0.0 --httpPort=8080"
+    secrets:
+      - jenkins_admin_user
+      - jenkins_admin_password
+    volumes:
+      - jenkins_home:/var/jenkins_home
+    networks:
+      - jenkins_internal
+    cpus: 1.5
+    mem_limit: 2g
+    pids_limit: 512
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  platform-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    image: develope-project/jenkins-agent:3391-jdk21-toolchain-local
+    restart: unless-stopped
+    depends_on:
+      - controller
+    user: "1000:1000"
+    secrets:
+      - jenkins_agent_secret
+    networks:
+      - jenkins_internal
+    cpus: 2.0
+    mem_limit: 3g
+    pids_limit: 768
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  jenkins_home:
+
+networks:
+  jenkins_internal:
+    driver: bridge
+
+secrets:
+  jenkins_admin_user:
+    file: ${JENKINS_SECRETS_DIR:?Run platform/jenkins/bootstrap-local-secrets.sh first}/jenkins_admin_user
+  jenkins_admin_password:
+    file: ${JENKINS_SECRETS_DIR:?Run platform/jenkins/bootstrap-local-secrets.sh first}/jenkins_admin_password
+  jenkins_agent_secret:
+    file: ${JENKINS_SECRETS_DIR:?Run platform/jenkins/bootstrap-local-secrets.sh first}/jenkins_agent_secret

@@ -1,0 +1,26 @@
+# Installed by the platform administrator, never by the application lane.
+# A named GET does not allow listing other teams' Applications or reading Secrets.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: validation-application-reader
+  namespace: argocd
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications"]
+    resourceNames: ["data-pipeline-validation"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: validation-application-reader
+  namespace: argocd
+subjects:
+  - kind: ServiceAccount
+    name: kyobo-developer-readonly
+    namespace: platform-validation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: validation-application-reader

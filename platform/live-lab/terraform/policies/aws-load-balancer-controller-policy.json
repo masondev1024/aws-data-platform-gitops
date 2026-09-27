@@ -1,0 +1,142 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "iam:CreateServiceLinkedRole",
+      "Resource": "*",
+      "Condition": {"StringEquals": {"iam:AWSServiceName": "elasticloadbalancing.amazonaws.com"}}
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeAccountAttributes", "ec2:DescribeAvailabilityZones", "ec2:DescribeInstances",
+        "ec2:DescribeManagedPrefixLists",
+        "ec2:DescribeNetworkInterfaces", "ec2:DescribeSecurityGroups", "ec2:DescribeSubnets",
+        "ec2:DescribeTags", "ec2:DescribeVpcs",
+        "elasticloadbalancing:DescribeListenerAttributes", "elasticloadbalancing:DescribeListeners",
+        "elasticloadbalancing:DescribeListenerCertificates", "elasticloadbalancing:DescribeLoadBalancerAttributes",
+        "elasticloadbalancing:DescribeLoadBalancers", "elasticloadbalancing:DescribeRules",
+        "elasticloadbalancing:DescribeSSLPolicies", "elasticloadbalancing:DescribeTags",
+        "elasticloadbalancing:DescribeTargetGroupAttributes", "elasticloadbalancing:DescribeTargetGroups",
+        "elasticloadbalancing:DescribeTargetHealth",
+        "cognito-idp:DescribeUserPoolClient", "acm:DescribeCertificate", "iam:GetServerCertificate",
+        "wafv2:GetWebACLForResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["wafv2:GetWebACL", "wafv2:AssociateWebACL", "wafv2:DisassociateWebACL"],
+      "Resource": "${waf_arn}"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["elasticloadbalancing:CreateLoadBalancer", "elasticloadbalancing:CreateTargetGroup"],
+      "Resource": "arn:aws:elasticloadbalancing:${region}:${account}:*",
+      "Condition": {"StringEquals": {"aws:RequestTag/elbv2.k8s.aws/cluster": "${cluster_name}"}}
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["elasticloadbalancing:CreateListener"],
+      "Resource": "arn:aws:elasticloadbalancing:${region}:${account}:loadbalancer/app/*/*",
+      "Condition": {"StringEquals": {
+        "aws:ResourceTag/elbv2.k8s.aws/cluster": "${cluster_name}",
+        "aws:RequestTag/elbv2.k8s.aws/cluster": "${cluster_name}"
+      }}
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["elasticloadbalancing:CreateRule"],
+      "Resource": "arn:aws:elasticloadbalancing:${region}:${account}:listener/app/*/*/*",
+      "Condition": {"StringEquals": {
+        "aws:ResourceTag/elbv2.k8s.aws/cluster": "${cluster_name}",
+        "aws:RequestTag/elbv2.k8s.aws/cluster": "${cluster_name}"
+      }}
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "elasticloadbalancing:ModifyLoadBalancerAttributes", "elasticloadbalancing:SetIpAddressType",
+        "elasticloadbalancing:SetSecurityGroups", "elasticloadbalancing:SetSubnets", "elasticloadbalancing:DeleteLoadBalancer",
+        "elasticloadbalancing:ModifyTargetGroup", "elasticloadbalancing:ModifyTargetGroupAttributes",
+        "elasticloadbalancing:DeleteTargetGroup", "elasticloadbalancing:RegisterTargets", "elasticloadbalancing:DeregisterTargets",
+        "elasticloadbalancing:ModifyListener", "elasticloadbalancing:ModifyListenerAttributes",
+        "elasticloadbalancing:AddListenerCertificates", "elasticloadbalancing:RemoveListenerCertificates",
+        "elasticloadbalancing:DeleteListener", "elasticloadbalancing:ModifyRule", "elasticloadbalancing:DeleteRule",
+        "elasticloadbalancing:GetLoadBalancerWebACL", "elasticloadbalancing:CreateWebACLAssociation",
+        "elasticloadbalancing:DeleteWebACLAssociation"
+      ],
+      "Resource": "arn:aws:elasticloadbalancing:${region}:${account}:*",
+      "Condition": {"StringEquals": {"aws:ResourceTag/elbv2.k8s.aws/cluster": "${cluster_name}"}}
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["elasticloadbalancing:AddTags", "elasticloadbalancing:RemoveTags"],
+      "Resource": "arn:aws:elasticloadbalancing:${region}:${account}:*",
+      "Condition": {
+        "StringEquals": {"aws:ResourceTag/elbv2.k8s.aws/cluster": "${cluster_name}"},
+        "ForAllValues:StringNotEquals": {"aws:TagKeys": "elbv2.k8s.aws/cluster"}
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["elasticloadbalancing:AddTags"],
+      "Resource": "arn:aws:elasticloadbalancing:${region}:${account}:*",
+      "Condition": {"StringEquals": {
+        "elasticloadbalancing:CreateAction": ["CreateLoadBalancer", "CreateTargetGroup", "CreateListener", "CreateRule"],
+        "aws:RequestTag/elbv2.k8s.aws/cluster": "${cluster_name}"
+      }}
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["ec2:CreateSecurityGroup"],
+      "Resource": "${vpc_arn}"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["ec2:CreateSecurityGroup"],
+      "Resource": "arn:aws:ec2:${region}:${account}:security-group/*",
+      "Condition": {
+        "StringEquals": {"aws:RequestTag/elbv2.k8s.aws/cluster": "${cluster_name}"},
+        "ArnEquals": {"ec2:Vpc": "${vpc_arn}"}
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["ec2:CreateTags"],
+      "Resource": "arn:aws:ec2:${region}:${account}:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:CreateAction": "CreateSecurityGroup",
+          "aws:RequestTag/elbv2.k8s.aws/cluster": "${cluster_name}"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["ec2:AuthorizeSecurityGroupIngress", "ec2:RevokeSecurityGroupIngress"],
+      "Resource": "arn:aws:ec2:${region}:${account}:security-group/*",
+      "Condition": {"ArnEquals": {"ec2:Vpc": "${vpc_arn}"}}
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["ec2:DeleteSecurityGroup"],
+      "Resource": "arn:aws:ec2:${region}:${account}:security-group/*",
+      "Condition": {
+        "StringEquals": {"aws:ResourceTag/elbv2.k8s.aws/cluster": "${cluster_name}"},
+        "ArnEquals": {"ec2:Vpc": "${vpc_arn}"}
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["ec2:CreateTags", "ec2:DeleteTags"],
+      "Resource": "arn:aws:ec2:${region}:${account}:security-group/*",
+      "Condition": {
+        "StringEquals": {"aws:ResourceTag/elbv2.k8s.aws/cluster": "${cluster_name}"},
+        "ForAllValues:StringNotEquals": {"aws:TagKeys": "elbv2.k8s.aws/cluster"},
+        "ArnEquals": {"ec2:Vpc": "${vpc_arn}"}
+      }
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+# syntax=docker/dockerfile:1.7
+FROM jenkins/inbound-agent:3391.va_37fa_a_305d6d-3-jdk21
+
+ARG TARGETARCH
+ARG TERRAFORM_VERSION=1.16.4
+ARG KUBECTL_VERSION=v1.37.0
+
+USER root
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+RUN <<'EOF'
+apt-get update
+apt-get install --no-install-recommends -y \
+  ca-certificates \
+  curl \
+  nodejs \
+  python3 \
+  python3-pip \
+  python3-venv \
+  unzip
+rm -rf /var/lib/apt/lists/*
+EOF
+
+RUN <<'EOF'
+case "${TARGETARCH}" in
+  amd64|arm64) ;;
+  *) echo "Unsupported TARGETARCH for Jenkins verifier agent: ${TARGETARCH}" >&2; exit 64 ;;
+esac
+
+terraform_zip="terraform_${TERRAFORM_VERSION}_linux_${TARGETARCH}.zip"
+curl -fsSLO "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/${terraform_zip}"
+curl -fsSLO "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_SHA256SUMS"
+grep " ${terraform_zip}$" "terraform_${TERRAFORM_VERSION}_SHA256SUMS" | sha256sum -c -
+unzip -q "${terraform_zip}" -d /usr/local/bin terraform
+rm -f "${terraform_zip}" "terraform_${TERRAFORM_VERSION}_SHA256SUMS"
+
+curl -fsSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl"
+curl -fsSLo /tmp/kubectl.sha256 "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl.sha256"
+printf '%s  /usr/local/bin/kubectl\n' "$(cat /tmp/kubectl.sha256)" | sha256sum -c -
+chmod 0755 /usr/local/bin/kubectl
+rm -f /tmp/kubectl.sha256
+
+cat > /usr/local/bin/jenkins-agent-with-local-secret.sh <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+
+agent_secret="$(cat /run/secrets/jenkins_agent_secret)"
+if [ -z "${agent_secret}" ]; then
+  echo "jenkins_agent_secret is empty. Copy the platform-agent secret from the Jenkins UI into the local secret file first." >&2
+  exit 78
+fi
+
+exec /usr/local/bin/jenkins-agent \
+  -url http://controller:8080/ \
+  -webSocket \
+  "${agent_secret}" \
+  platform-agent
+SCRIPT
+chmod 0755 /usr/local/bin/jenkins-agent-with-local-secret.sh
+EOF
+
+USER jenkins
+WORKDIR /home/jenkins/agent
+ENTRYPOINT ["/usr/local/bin/jenkins-agent-with-local-secret.sh"]
