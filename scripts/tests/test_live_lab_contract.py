@@ -102,16 +102,14 @@ def test_alb_controller_create_time_tag_permission_is_scoped_and_conditioned():
 
     assert len(create_time_add_tags) == 1
     statement = create_time_add_tags[0]
-    assert statement["Resource"] == [
-        "arn:aws:elasticloadbalancing:*:*:targetgroup/*/*",
-        "arn:aws:elasticloadbalancing:*:*:loadbalancer/net/*/*",
-        "arn:aws:elasticloadbalancing:*:*:loadbalancer/app/*/*",
-    ]
+    assert statement["Resource"] == "arn:aws:elasticloadbalancing:${region}:${account}:*"
     assert statement["Condition"]["StringEquals"]["elasticloadbalancing:CreateAction"] == [
-        "CreateTargetGroup",
         "CreateLoadBalancer",
+        "CreateTargetGroup",
+        "CreateListener",
+        "CreateRule",
     ]
-    assert statement["Condition"]["Null"]["aws:RequestTag/elbv2.k8s.aws/cluster"] == "false"
+    assert statement["Condition"]["StringEquals"]["aws:RequestTag/elbv2.k8s.aws/cluster"] == "${cluster_name}"
     assert all(item.get("Resource") != "*" for item in create_time_add_tags)
 
 

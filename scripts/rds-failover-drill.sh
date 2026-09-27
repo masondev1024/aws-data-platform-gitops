@@ -2,7 +2,11 @@
 set -Eeuo pipefail
 unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
 
-NAMESPACE="${NAMESPACE:-platform-validation}"
+if [[ "${NAMESPACE:-platform-validation}" != "platform-validation" ]]; then
+  printf 'NAMESPACE is fixed to platform-validation; refusing override\n' >&2
+  exit 2
+fi
+NAMESPACE="platform-validation"
 SESSION_ID="${SESSION_ID:?SESSION_ID is required; use the bare Terraform session_id tag value}"
 APPROVAL_ID="${APPROVAL_ID:?APPROVAL_ID is required; use the exact approved Terraform approval_id}"
 RESOURCE_PREFIX="${RESOURCE_PREFIX:-kyobo-${SESSION_ID}}"
@@ -49,7 +53,9 @@ slug = re.sub(r"[^a-z0-9-]+", "-", sys.argv[1].lower()).strip("-")
 print((slug or "run")[:36])
 PY
 )"
-HELPER_CONFIGMAP_NAME="${HELPER_CONFIGMAP_NAME:-rds-drill-helper-${RUN_SLUG}}"
+HELPER_SCOPE_TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(4))')"
+HELPER_NAME_SLUG="${RUN_SLUG:0:24}"
+HELPER_CONFIGMAP_NAME="rds-drill-helper-${HELPER_NAME_SLUG}-${HELPER_SCOPE_TOKEN}"
 
 mkdir -p "$OUTPUT_DIR"
 OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
@@ -64,7 +70,6 @@ ORIGINAL_CRON_SUSPEND=""
 ORIGINAL_WRITER_ENDPOINT=""
 ORIGINAL_WRITER_SECURITY_GROUPS=""
 PROMOTED_WRITER_ENDPOINT=""
-HELPER_JOBS=()
 CURL_TLS_ARGS=()
 APP_IMAGE=""
 BASE_HOST=""
@@ -215,6 +220,7 @@ require_fence_output() {
 validate_identifiers() {
   [[ "$SESSION_ID" =~ ^[a-z0-9][a-z0-9-]{5,40}$ ]] || fail_closed "SESSION_ID must match Terraform session_id: lowercase letters, digits, and hyphens, 6-41 chars"
   [[ "$APPROVAL_ID" =~ ^SS0-[0-9]{8}-[A-Za-z0-9._-]{3,64}$ ]] || fail_closed "APPROVAL_ID must match the recorded approval_id"
+  (( ${#APPROVAL_ID} <= 63 )) && [[ "$APPROVAL_ID" =~ [A-Za-z0-9]$ ]] || fail_closed "APPROVAL_ID must fit a Kubernetes label value"
   [[ "$AWS_REGION" == "ap-northeast-2" ]] || fail_closed "This recovery drill is approved only for ap-northeast-2"
   [[ "$RESOURCE_PREFIX" =~ ^[a-z0-9][a-z0-9-]{5,64}$ ]] || fail_closed "RESOURCE_PREFIX must be lowercase letters, digits, and hyphens"
   [[ "$RESOURCE_PREFIX" == "kyobo-${SESSION_ID}" ]] || fail_closed "RESOURCE_PREFIX must be exactly kyobo-${SESSION_ID} for this approved session"
@@ -400,20 +406,53 @@ run_multi_az_rto_probe() {
   event "multi-az-force-failover" "completed" "first_failure_ms=${failure_ms:-not-observed} recovery_ms=${recovery_ms:-plan-mode}"
 }
 
+helper_resource_state() {
+  local resource
+  if ! resource="$(kube get "$1" "$2" --ignore-not-found -o name 2>/dev/null)"; then
+    return 2
+  fi
+  [[ -n "$resource" ]] && return 0
+  return 1
+}
+
 ensure_helper_configmap() {
+  local resource_state=0
   if [[ "$DRILL_MODE" != "execute" ]]; then
     log "[plan] create exact helper ConfigMap $HELPER_CONFIGMAP_NAME from $HELPER_SOURCE"
     return 0
   fi
   [[ -f "$HELPER_SOURCE" ]] || fail_closed "Helper source not found: $HELPER_SOURCE"
-  kube delete configmap "$HELPER_CONFIGMAP_NAME" --ignore-not-found=true >/dev/null
-  kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" create configmap "$HELPER_CONFIGMAP_NAME" \
-    --from-file=replica_drill.py="$HELPER_SOURCE" >/dev/null
-  kube label configmap "$HELPER_CONFIGMAP_NAME" \
-    app.kubernetes.io/managed-by=rds-failover-drill \
-    live-lab-session="$SESSION_ID" \
-    live-lab-run="$RUN_SLUG" \
-    --overwrite >/dev/null
+  helper_resource_state configmap "$HELPER_CONFIGMAP_NAME" || resource_state=$?
+  case "$resource_state" in
+    0) fail_closed "Helper ConfigMap name already exists; refusing to reuse or replace it" ;;
+    1) ;;
+    *) fail_closed "Could not safely inspect helper ConfigMap; refusing to create it" ;;
+  esac
+  python3 - "$HELPER_CONFIGMAP_NAME" "$NAMESPACE" "$SESSION_ID" "$APPROVAL_ID" \
+    "$RUN_SLUG" "$HELPER_SCOPE_TOKEN" "$HELPER_SOURCE" <<'PY' | kube create -f - >/dev/null
+import json
+import pathlib
+import sys
+
+name, namespace, session, approval, run_slug, token, source = sys.argv[1:8]
+manifest = {
+    "apiVersion": "v1",
+    "kind": "ConfigMap",
+    "metadata": {
+        "name": name,
+        "namespace": namespace,
+        "labels": {
+            "app.kubernetes.io/managed-by": "rds-failover-drill",
+            "live-lab-session": session,
+            "live-lab-approval": approval,
+            "live-lab-run": run_slug,
+            "live-lab-helper-token": token,
+        },
+    },
+    "data": {"replica_drill.py": pathlib.Path(source).read_text(encoding="utf-8")},
+}
+print(json.dumps(manifest))
+PY
 }
 
 helper_job() {
@@ -421,8 +460,11 @@ helper_job() {
   shift
   local image="$1"
   shift
-  local job_name="rds-drill-${RUN_SLUG}-${action//[^A-Za-z0-9-]/-}"
-  job_name="${job_name:0:58}"
+  local job_name job_token action_slug resource_state=0
+  job_token="$(python3 -c 'import secrets; print(secrets.token_hex(6))')"
+  action_slug="${action//[^a-z0-9-]/-}"
+  job_name="rds-drill-${RUN_SLUG:0:17}-${HELPER_SCOPE_TOKEN}-${job_token}-${action_slug}"
+  (( ${#job_name} <= 63 )) || fail_closed "Helper Job name exceeds the Kubernetes DNS limit"
   local args_json result
   args_json="$(python3 - "$action" "$@" <<'PY'
 import json
@@ -434,35 +476,42 @@ PY
     log "[plan] helper job $job_name action=$action args=$*"
     return 0
   fi
-  HELPER_JOBS+=("$job_name")
-  kube delete job "$job_name" --ignore-not-found=true >/dev/null
-  python3 - "$job_name" "$image" "$args_json" "$CA_PATH" "$HELPER_CONFIGMAP_NAME" "$SESSION_ID" "$RUN_SLUG" <<'PY' | kube create -f - >/dev/null
+  helper_resource_state job "$job_name" || resource_state=$?
+  case "$resource_state" in
+    0) fail_closed "Helper Job name already exists; refusing to reuse or replace it: $job_name" ;;
+    1) ;;
+    *) fail_closed "Could not safely inspect helper Job $job_name; refusing to create it" ;;
+  esac
+  python3 - "$job_name" "$image" "$args_json" "$CA_PATH" "$HELPER_CONFIGMAP_NAME" \
+    "$NAMESPACE" "$SESSION_ID" "$APPROVAL_ID" "$RUN_SLUG" "$HELPER_SCOPE_TOKEN" "$job_token" <<'PY' | kube create -f - >/dev/null
 import json
 import sys
 
-job_name, image, args_json, ca_path, helper_configmap_name, session_id, run_slug = sys.argv[1:8]
+job_name, image, args_json, ca_path, helper_configmap_name, namespace, session_id, approval_id, run_slug, token, job_token = sys.argv[1:12]
 command = json.loads(args_json)
+labels = {
+    "app.kubernetes.io/managed-by": "rds-failover-drill",
+    "live-lab-session": session_id,
+    "live-lab-approval": approval_id,
+    "live-lab-run": run_slug,
+    "live-lab-helper-token": token,
+    "live-lab-helper-job-token": job_token,
+}
 manifest = {
     "apiVersion": "batch/v1",
     "kind": "Job",
     "metadata": {
         "name": job_name,
-        "labels": {
-            "app.kubernetes.io/managed-by": "rds-failover-drill",
-            "live-lab-session": session_id,
-            "live-lab-run": run_slug,
-        },
+        "namespace": namespace,
+        "labels": labels,
     },
     "spec": {
         "backoffLimit": 0,
+        "activeDeadlineSeconds": 180,
         "ttlSecondsAfterFinished": 600,
         "template": {
             "metadata": {
-                "labels": {
-                    "app.kubernetes.io/managed-by": "rds-failover-drill",
-                    "live-lab-session": session_id,
-                    "live-lab-run": run_slug,
-                },
+                "labels": labels,
             },
             "spec": {
                 "restartPolicy": "Never",
@@ -545,12 +594,8 @@ cleanup_helpers() {
   if [[ "$DRILL_MODE" != "execute" ]]; then
     return 0
   fi
-  local job
-  for job in "${HELPER_JOBS[@]}"; do
-    kube delete job "$job" --ignore-not-found=true >/dev/null
-  done
-  kube delete configmap "$HELPER_CONFIGMAP_NAME" --ignore-not-found=true >/dev/null
-  event "helper-cleanup" "completed" "configmap=$HELPER_CONFIGMAP_NAME jobs=${#HELPER_JOBS[@]}"
+  log "Retaining helper ConfigMap for namespace-scoped teardown; completed Jobs expire by TTL"
+  event "helper-cleanup" "retained" "configmap=$HELPER_CONFIGMAP_NAME cleanup=namespace-teardown job_ttl_seconds=600"
 }
 
 quiesce_writers() {
@@ -731,4 +776,6 @@ main() {
   log "Drill completed. Evidence: $OUTPUT_DIR"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

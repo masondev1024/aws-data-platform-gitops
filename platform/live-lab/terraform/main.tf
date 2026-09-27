@@ -411,7 +411,13 @@ resource "aws_iam_openid_connect_provider" "eks" {
 resource "aws_iam_policy" "aws_load_balancer_controller" {
   name        = "${local.name_prefix}-aws-load-balancer-controller"
   description = "Scoped bootstrap policy for the AWS Load Balancer Controller in the ephemeral validation cluster."
-  policy      = file("${path.module}/policies/aws-load-balancer-controller-policy.json")
+  policy = templatefile("${path.module}/policies/aws-load-balancer-controller-policy.json", {
+    region       = var.aws_region
+    account      = var.aws_account_id
+    cluster_name = aws_eks_cluster.lab.name
+    vpc_arn      = aws_vpc.lab.arn
+    waf_arn      = aws_wafv2_web_acl.lab.arn
+  })
 
   depends_on = [terraform_data.approval_gate]
 }

@@ -125,6 +125,7 @@ helm --repository-config "$helm_repo_config" --repository-cache "$helm_repo_cach
 helm --kube-context "$KUBE_CONTEXT" --repository-config "$helm_repo_config" --repository-cache "$helm_repo_cache" upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
   --version 3.5.0 --namespace kube-system --set-string "clusterName=$CLUSTER_NAME" \
   --set-string "region=$AWS_REGION" --set-string "vpcId=$vpc_id" \
+  --set enableShield=false --set enableWaf=false --set enableWafv2=true \
   --set serviceAccount.create=false --set serviceAccount.name=aws-load-balancer-controller \
   --wait --timeout 5m
 helm --kube-context "$KUBE_CONTEXT" --repository-config "$helm_repo_config" --repository-cache "$helm_repo_cache" upgrade --install live-lab-observability prometheus-community/kube-prometheus-stack \
