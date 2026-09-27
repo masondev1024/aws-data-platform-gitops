@@ -4,6 +4,7 @@ from pathlib import Path
 import argparse
 
 import pytest
+import yaml
 
 
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "prepare_release_candidate.py"
@@ -41,10 +42,11 @@ def test_candidate_manifest_uses_digest_without_mutating_source_text():
         image_digest=VALID_DIGEST,
     )
 
-    assert "old.example.com" in original
-    assert f"newName: {IMAGE_NAME}" in rendered
-    assert f"newTag: {VALID_SHA}" in rendered
-    assert f"digest: {VALID_DIGEST}" in rendered
+    assert yaml.safe_load(original)["images"][0]["newName"] == "old.example.com/data-pipeline-app"
+    assert yaml.safe_load(rendered)["images"] == [{
+        "name": "data-pipeline-app", "newName": IMAGE_NAME,
+        "newTag": VALID_SHA, "digest": VALID_DIGEST,
+    }]
 
 
 def test_candidate_manifest_rejects_multiple_image_overrides():
