@@ -14,7 +14,9 @@ spec:
           servicePort: 80
       steps:
         - setWeight: 10
-        - pause: { duration: 2m }
+        # Keep load running for a full five-minute measurement window before
+        # analysis; the AnalysisTemplate then takes three fresh 30s samples.
+        - pause: { duration: 5m }
         - analysis:
             templates:
               - templateName: data-pipeline-canary
@@ -37,13 +39,36 @@ spec:
       labels:
         app: data-pipeline-app
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: app-container
           image: data-pipeline-app:latest
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           env:
             - name: FLASK_ENV
               value: production
+            - name: DEPLOYMENT_TIER
+              value: production
+            - name: DB_REQUIRE_TLS
+              value: "true"
+            - name: DB_SSL_CA
+              value: /etc/rds-ca/global-bundle.pem
+          volumeMounts:
+            - name: rds-ca-bundle
+              mountPath: /etc/rds-ca
+              readOnly: true
           ports:
             - containerPort: 8080
           readinessProbe:
@@ -67,3 +92,7 @@ spec:
                 name: raffle-config
             - secretRef:
                 name: raffle-secret
+      volumes:
+        - name: rds-ca-bundle
+          configMap:
+            name: rds-ca-bundle

@@ -1,0 +1,34 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: raffle-draw-job
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: draw-worker
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: rds-ca-bundle
+                  mountPath: /etc/rds-ca
+                  readOnly: true
+          volumes:
+            - name: rds-ca-bundle
+              configMap:
+                name: rds-ca-bundle
+                items:
+                  - key: global-bundle.pem
+                    path: global-bundle.pem

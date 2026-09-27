@@ -50,14 +50,23 @@ data "aws_ssm_parameter" "ami" {
 }
 
 resource "aws_instance" "bastion" {
-  ami                    = data.aws_ssm_parameter.ami.value
-  instance_type          = "t3.micro"
-  subnet_id              = aws_subnet.public_a.id
-  vpc_security_group_ids = [aws_security_group.command_server.id]
-  iam_instance_profile   = aws_iam_instance_profile.bastion.name
-  # 퍼블릭 IP 할당 명시 (이미 서브넷 설정에 되어있지만 가독성을 위해 추가)
-  associate_public_ip_address = true
-  tags                        = { Name = "bastion-host" }
+  ami           = data.aws_ssm_parameter.ami.value
+  instance_type = "t3.micro"
+  # Operate through AWS Systems Manager from a private subnet. This removes
+  # the need for a public IP and avoids making SSH a prerequisite for drills.
+  subnet_id                   = aws_subnet.app_private_a.id
+  vpc_security_group_ids      = [aws_security_group.command_server.id]
+  iam_instance_profile        = aws_iam_instance_profile.bastion.name
+  associate_public_ip_address = false
+  metadata_options {
+    http_endpoint = "enabled"
+    http_tokens   = "required"
+  }
+  root_block_device {
+    encrypted   = true
+    volume_type = "gp3"
+  }
+  tags = { Name = "bastion-host" }
 }
 
 resource "aws_db_subnet_group" "main" {
@@ -75,6 +84,8 @@ resource "aws_db_instance" "primary" {
   vpc_security_group_ids  = [aws_security_group.rds.id]
   username                = "admin"
   password                = var.db_password
+  storage_encrypted       = true
+  kms_key_id              = aws_kms_key.platform.arn
   backup_retention_period = 1
   multi_az                = var.enable_rds_multi_az
   publicly_accessible     = false

@@ -1,0 +1,42 @@
+jenkins:
+  systemMessage: "Local-only Jenkins verifier for the AWS data platform repository. GitHub Actions remains authoritative for image build, publish, and deployment."
+  numExecutors: 0
+  mode: EXCLUSIVE
+  remotingSecurity:
+    enabled: true
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "${JENKINS_ADMIN_ID}"
+          password: "${JENKINS_ADMIN_PASSWORD}"
+  authorizationStrategy:
+    globalMatrix:
+      entries:
+        - user:
+            name: "${JENKINS_ADMIN_ID}"
+            permissions:
+              - "Overall/Administer"
+        - group:
+            name: "authenticated"
+            permissions:
+              - "Overall/Read"
+  nodes:
+    - permanent:
+        name: "platform-agent"
+        remoteFS: "/home/jenkins/agent"
+        labelString: "platform-agent dockerless verifier"
+        numExecutors: 1
+        mode: EXCLUSIVE
+        retentionStrategy: "always"
+        launcher:
+          inbound:
+            webSocket: true
+
+security:
+  queueItemAuthenticator:
+    authenticators: []
+
+unclassified:
+  location:
+    url: "http://127.0.0.1:8080/"

@@ -1,0 +1,26 @@
+[
+  {
+    "name": "writer_db_parity_gap",
+    "mode": "replay",
+    "tool_sequence": ["inspect_data_integrity"],
+    "diagnosis": "parity_gap",
+    "evidence_refs": ["data.outbox_parity_gap"],
+    "unknowns": []
+  },
+  {
+    "name": "parity_measurement_failed_closed",
+    "mode": "replay",
+    "tool_sequence": ["inspect_data_integrity"],
+    "diagnosis": "parity_measurement_unavailable",
+    "evidence_refs": ["data.outbox_parity_gap"],
+    "unknowns": []
+  },
+  {
+    "name": "latency_missing_due_to_no_samples",
+    "mode": "replay",
+    "tool_sequence": ["inspect_api_health"],
+    "diagnosis": "insufficient_evidence",
+    "evidence_refs": [],
+    "unknowns": ["api.apply_p95_seconds"]
+  }
+]

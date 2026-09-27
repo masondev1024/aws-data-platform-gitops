@@ -16,8 +16,10 @@ data "aws_region" "current" {}
 # ECR Repository
 ############################
 resource "aws_ecr_repository" "app_repo" {
-  name                 = "data-pipeline-app"
-  image_tag_mutability = "MUTABLE"
+  name = "data-pipeline-app"
+  # CD uses the source commit SHA as the tag. Immutability makes a previously
+  # approved GitOps revision resolve to the same image on every rollback.
+  image_tag_mutability = "IMMUTABLE"
   force_delete         = true
 
   image_scanning_configuration {

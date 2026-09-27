@@ -1,0 +1,19 @@
+# Input contract consumed by the scaffold and, later, a Backstage/Port template.
+apiVersion: platform.d2c/v1alpha1
+kind: ServiceContract
+metadata:
+  name: catalog-api
+spec:
+  owner: team-d2c-platform
+  runtime: python
+  port: 8080
+  healthPath: /healthz
+  delivery:
+    imagePolicy: immutable-sha
+    deploymentStrategy: argo-rollouts-canary
+    analysisProvider: prometheus
+  operations:
+    requiredSignals:
+      - http_5xx_rate
+      - http_p95_latency
+      - domain_integrity

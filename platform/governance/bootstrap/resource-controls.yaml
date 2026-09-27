@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: platform-validation-quota
+  namespace: platform-validation
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 4Gi
+    limits.cpu: "4"
+    limits.memory: 8Gi
+    pods: "16"
+    services: "6"
+    configmaps: "12"
+    secrets: "4"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: platform-validation-defaults
+  namespace: platform-validation
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      default:
+        cpu: 500m
+        memory: 512Mi
+      max:
+        cpu: "1"
+        memory: 1Gi

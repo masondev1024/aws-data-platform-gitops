@@ -12,3 +12,19 @@
 __pycache__/
 *.pyc
 .omx/
+.omc/
+.config/
+
+# The root README is the only Markdown file published from this repository.
+*.md
+!/README.md
+
+# Local run artifacts and credentials
+/evidence/
+secrets/
+
+# Local-only engineering notes and portfolio records
+docs/
+PORTFOLIO_ENGINEERING_JOURNEY.md
+loadtest/README.md
+platform/golden-path/README.md

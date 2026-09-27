@@ -1,2 +1,6 @@
 -r requirements.txt
-pytest>=8,<9
+-r ../agentic_ops/requirements-bedrock.txt
+PyYAML==6.0.3
+bandit==1.8.6
+pip-audit==2.9.0
+pytest==8.4.2

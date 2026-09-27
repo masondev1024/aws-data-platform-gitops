@@ -1,0 +1,25 @@
+# syntax=docker/dockerfile:1.7
+FROM jenkins/jenkins:2.568.3-jdk21
+
+USER root
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+COPY plugins.txt /usr/share/jenkins/ref/plugins.txt
+RUN jenkins-plugin-cli --plugin-file /usr/share/jenkins/ref/plugins.txt
+
+COPY casc.yaml /usr/share/jenkins/ref/casc.yaml
+RUN <<'EOF'
+cat > /usr/local/bin/jenkins-with-local-secrets.sh <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+
+export CASC_JENKINS_CONFIG=/usr/share/jenkins/ref/casc.yaml
+export JENKINS_ADMIN_ID="$(cat /run/secrets/jenkins_admin_user)"
+export JENKINS_ADMIN_PASSWORD="$(cat /run/secrets/jenkins_admin_password)"
+
+exec /usr/local/bin/jenkins.sh "$@"
+SCRIPT
+chmod 0755 /usr/local/bin/jenkins-with-local-secrets.sh
+EOF
+
+USER jenkins
+ENTRYPOINT ["/usr/local/bin/jenkins-with-local-secrets.sh"]

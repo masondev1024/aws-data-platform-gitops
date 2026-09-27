@@ -2,17 +2,45 @@ variable "vpc_cidr" {
   type    = string
   default = "10.0.32.0/20"
 }
-# 현재는 팀원들의 원활한 공동 작업을 위해 SSH를 전체 개방(0.0.0.0/0) 
-# 실제 운영 환경으로 전환 시에는 회사 VPN IP 또는 팀원들의 고정 IP로 제한
 variable "allowed_ssh_location" {
-  type    = string
-  default = "0.0.0.0/0"
+  description = "Optional administrator CIDR for legacy SSH access; SSM is the default access path."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.allowed_ssh_location == null ? true : can(cidrhost(var.allowed_ssh_location, 0))
+    error_message = "allowed_ssh_location must be a valid CIDR block or null."
+  }
 }
 
 variable "aws_region" {
   description = "The AWS region to deploy the infrastructure in"
   type        = string
   default     = "eu-west-1"
+}
+
+variable "cluster_endpoint_public_access" {
+  description = "Keep the EKS API public only for bootstrap from an approved CIDR; set false when Terraform runs inside the VPC."
+  type        = bool
+  default     = false
+}
+
+variable "cluster_api_allowed_cidrs" {
+  description = "Explicit administrator or CI CIDRs allowed to reach the EKS public API during bootstrap."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition = (
+      !var.cluster_endpoint_public_access
+      || (
+        length(var.cluster_api_allowed_cidrs) > 0
+        && alltrue([for cidr in var.cluster_api_allowed_cidrs : can(cidrhost(cidr, 0))])
+      )
+    )
+    error_message = "cluster_api_allowed_cidrs must contain valid CIDRs when public EKS API access is enabled."
+  }
 }
 
 variable "github_owner" {

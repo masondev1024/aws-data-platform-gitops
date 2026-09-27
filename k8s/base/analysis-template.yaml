@@ -9,41 +9,83 @@ spec:
     - name: service-name
   metrics:
     - name: canary-error-rate
-      initialDelay: 30s
+      initialDelay: 0s
       interval: 30s
       count: 3
-      failureLimit: 1
-      inconclusiveLimit: 1
+      # The 1% SLO is a hard promotion boundary; one failed measurement is not tolerated.
+      failureLimit: 0
+      inconclusiveLimit: 0
       successCondition: result[0] < 0.01
       provider:
         prometheus:
           address: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
           query: >-
-            (sum(rate(raffle_http_requests_total{service="{{args.service-name}}",status=~"5.."}[5m])) or vector(0))
-            /
-            clamp_min(sum(rate(raffle_http_requests_total{service="{{args.service-name}}"}[5m])), 1)
-    - name: canary-apply-samples
-      # A latency percentile is undefined when no apply request has reached
-      # the canary. Fail closed on missing samples instead of allowing
-      # result[0] to raise a runtime slice-index error.
-      initialDelay: 30s
+            (
+              (
+                sum(rate(raffle_http_requests_total{service="{{args.service-name}}",status=~"5.."}[5m]))
+                or vector(0)
+              )
+              /
+              clamp_min(
+                sum(rate(raffle_http_requests_total{service="{{args.service-name}}"}[5m]))
+                or vector(0),
+                0.000001
+              )
+            ) or vector(1)
+    - name: canary-metrics-freshness
+      initialDelay: 0s
       interval: 30s
       count: 3
-      failureLimit: 1
-      inconclusiveLimit: 1
-      successCondition: result[0] > 0
+      failureLimit: 0
+      inconclusiveLimit: 0
+      successCondition: result[0] < 90
       provider:
         prometheus:
           address: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
           query: >-
-            sum(increase(raffle_http_requests_total{service="{{args.service-name}}",route="/api/apply"}[5m]))
-            or vector(0)
-    - name: canary-apply-p95
-      initialDelay: 30s
+            max(time() - timestamp(raffle_http_requests_total{service="{{args.service-name}}"}))
+            or vector(999)
+    - name: canary-apply-samples
+      # A latency percentile is undefined when no apply request has reached
+      # the canary. Fail closed on missing samples instead of allowing
+      # result[0] to raise a runtime slice-index error.
+      initialDelay: 0s
       interval: 30s
       count: 3
       failureLimit: 1
-      inconclusiveLimit: 1
+      inconclusiveLimit: 0
+      successCondition: result[0] >= 100
+      provider:
+        prometheus:
+          address: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+          query: >-
+            sum(increase(raffle_apply_requests_total{service="{{args.service-name}}",result="success"}[5m]))
+            or vector(0)
+    - name: canary-apply-outbox-parity
+      # Read the invariant from the writer database. App-side success and
+      # persisted-event counters are intentionally not used as the source of
+      # truth because both counters can be incremented by the same code path.
+      # Any negative sample takes precedence; otherwise retain the largest gap.
+      # A healthy pod must not mask another pod's failed check or discrepancy.
+      initialDelay: 0s
+      interval: 30s
+      count: 3
+      failureLimit: 0
+      inconclusiveLimit: 0
+      successCondition: result[0] == 0
+      provider:
+        prometheus:
+          address: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+          query: >-
+            (min(raffle_apply_outbox_parity_gap{service="{{args.service-name}}"}) < 0)
+            or max(raffle_apply_outbox_parity_gap{service="{{args.service-name}}"})
+            or vector(-1)
+    - name: canary-apply-p95
+      initialDelay: 0s
+      interval: 30s
+      count: 3
+      failureLimit: 1
+      inconclusiveLimit: 0
       successCondition: result[0] < 0.5
       provider:
         prometheus:
@@ -55,4 +97,4 @@ spec:
                 rate(raffle_http_request_duration_seconds_bucket{service="{{args.service-name}}",route="/api/apply"}[5m])
               )
             )
-            or vector(0)
+            or vector(999)

@@ -3,21 +3,47 @@ kind: CronJob
 metadata:
   name: raffle-draw-job
 spec:
-  schedule: "* * * * *" # 매 1분마다 실행
+  schedule: "* * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
+      backoffLimit: 2
       template:
         spec:
-          containers:
-          - name: draw-worker
-            image: data-pipeline-app:latest
-            command: ["python", "draw_winner.py"]
-            envFrom:
-            - configMapRef:
-                name: raffle-config
-            - secretRef:
-                name: raffle-secret
+          automountServiceAccountToken: false
           restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: draw-worker
+              image: data-pipeline-app:latest
+              command: ["python", "draw_winner.py"]
+              env:
+                - name: DB_REQUIRE_TLS
+                  value: "true"
+                - name: DB_SSL_CA
+                  value: /etc/rds-ca/global-bundle.pem
+              volumeMounts:
+                - name: rds-ca-bundle
+                  mountPath: /etc/rds-ca
+                  readOnly: true
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              envFrom:
+                - configMapRef:
+                    name: raffle-config
+                - secretRef:
+                    name: raffle-secret
+          volumes:
+            - name: rds-ca-bundle
+              configMap:
+                name: rds-ca-bundle

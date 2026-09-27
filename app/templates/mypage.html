@@ -2,17 +2,18 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>My Page</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-50">
-    <div class="max-w-2xl mx-auto py-16 px-4">
+    <main class="max-w-2xl mx-auto py-16 px-4">
         <div class="flex items-center justify-between mb-12">
             <h1 class="text-3xl font-black italic">MY PAGE</h1>
-            <a href="/" class="text-sm font-bold text-gray-400 hover:text-black">HOME ⬅️</a>
+            <a href="{{ url_for('index') }}" class="text-sm font-bold text-gray-400 hover:text-black">HOME ⬅️</a>
         </div>
-        
-        <div class="bg-white rounded-2xl p-8 shadow-sm border border-gray-100">
+
+        <section class="bg-white rounded-2xl p-8 shadow-sm border border-gray-100">
             <div class="flex items-center mb-10">
                 <div class="w-16 h-16 bg-gray-200 rounded-full mr-4"></div>
                 <div>
@@ -39,7 +40,7 @@
                     {% endfor %}
                 {% endif %}
             </div>
-        </div>
-    </div>
+        </section>
+    </main>
 </body>
 </html>

@@ -1,20 +1,32 @@
-# 1. 파이썬 실행 환경 선택 (가벼운 버전인 alpine이나 slim 추천)
-FROM python:3.12-slim
+FROM python:3.13-slim-trixie@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285 AS builder
 
-# 2. 컨테이너 내부 작업 디렉토리 설정
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /build
+
+COPY requirements.txt ./
+RUN python -m pip install --upgrade pip==26.2.1 \
+    && python -m pip install --no-cache-dir --target=/opt/python --requirement requirements.txt
+
+FROM gcr.io/distroless/python3-debian13:nonroot@sha256:8ee214843129f43e2ebf5e0ca9f2e4e6d8292143d1b8a6787f169b5898578884
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/opt/python:/app
+
 WORKDIR /app
 
-# 3. 필요한 라이브러리 설치 파일 복사 (requirements.txt가 있다면)
-# 없다면 이 단계는 생략해도 되지만, 보통 아래처럼 작성해.
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY --from=builder /opt/python /opt/python
 
-# 4. 내 소스 코드와 템플릿 폴더 복사
-# k8s 폴더는 복사하지 않도록 명시적으로 필요한 것만 골라 담자.
-COPY app.py .
-COPY draw_winner.py .
-COPY templates/ ./templates/
+COPY --chown=65532:65532 app.py db.py catalog_cache.py draw_winner.py migrate.py schema.py ./
+COPY --chown=65532:65532 templates/ ./templates/
+COPY --chown=65532:65532 static/ ./static/
 
-# 5. Flask 서버 실행 (8080 포트 사용 가정)
+USER 65532:65532
 EXPOSE 8080
-CMD ["python", "app.py"]
+
+# Keep one Prometheus registry per pod. Scale horizontally with Rollout/HPA
+# rather than using Gunicorn workers that would expose split counter state.
+CMD ["-m", "gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "4", "--worker-tmp-dir", "/dev/shm", "--timeout", "30", "--access-logfile", "-", "--error-logfile", "-", "app:app"]

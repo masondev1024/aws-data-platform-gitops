@@ -1,5 +1,5 @@
-flask
-mysql-connector-python
-requests
-pymysql
-prometheus-client>=0.20,<1
+Flask==3.1.3
+Flask-WTF==1.2.2
+PyMySQL==1.1.2
+prometheus-client==0.22.1
+gunicorn==23.0.0

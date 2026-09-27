@@ -1,0 +1,13 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: governance-live-forbidden
+  namespace: platform-validation
+subjects:
+  - kind: ServiceAccount
+    name: kyobo-developer-readonly
+    namespace: platform-validation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kyobo-developer-readonly

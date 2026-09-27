@@ -44,3 +44,13 @@ spec:
           annotations:
             summary: Raffle application p95 latency is above the initial SLO
             description: The p95 latency of /api/apply has exceeded 500ms for 10 minutes.
+        - alert: RaffleApplyOutboxParityLost
+          expr: >-
+            (min(raffle_apply_outbox_parity_gap) or vector(-1)) != 0
+          for: 2m
+          labels:
+            severity: page
+            service: data-pipeline
+          annotations:
+            summary: A successful raffle application has no matching outbox event
+            description: The writer-database parity check is non-zero or unavailable. Stop rollout progression and reconcile raffle_entries against raffle_outbox_events.

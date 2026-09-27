@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: platform-validation
+resources:
+  - ../../base
+images:
+  - name: data-pipeline-app
+    newName: data-pipeline-app
+    newTag: pending-reviewed-release
+patches:
+  - target:
+      group: argoproj.io
+      version: v1alpha1
+      kind: Rollout
+      name: data-pipeline-rollout
+    path: patch-rollout.yaml
+  - path: patch-migration.yaml
+  - path: patch-cronjob.yaml
+  - path: exclude-platform-ingress.yaml
+  - target:
+      group: argoproj.io
+      version: v1alpha1
+      kind: AnalysisTemplate
+      name: data-pipeline-canary
+    path: patch-prometheus.yaml
