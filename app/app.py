@@ -104,6 +104,7 @@ for apply_result in (
     "unauthenticated",
     "integrity_protection_rejected",
     "duplicate",
+    "item_unavailable",
     "database_error",
 ):
     RAFFLE_APPLY_REQUESTS.labels(apply_result).inc(0)
@@ -535,6 +536,21 @@ def api_apply():
                 session.clear()
                 RAFFLE_APPLY_REQUESTS.labels("unauthenticated").inc()
                 return jsonify({"status": "error", "message": "login_required"}), 401
+
+            # Serialize eligibility with the draw worker's update of this item.
+            # Database UTC avoids host-clock drift at the closing boundary.
+            cursor.execute(
+                """
+                SELECT id FROM raffle_items
+                WHERE id = %s AND end_time > UTC_TIMESTAMP() AND is_drawn = FALSE
+                FOR UPDATE
+                """,
+                (item_id,),
+            )
+            if not cursor.fetchone():
+                connection.rollback()
+                RAFFLE_APPLY_REQUESTS.labels("item_unavailable").inc()
+                return jsonify({"status": "error", "message": "item_not_open"}), 400
 
             cursor.execute(
                 "INSERT INTO raffle_entries (user_id, item_id) VALUES (%s, %s)",

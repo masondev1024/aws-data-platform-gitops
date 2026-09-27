@@ -35,6 +35,22 @@ def test_schema_migrations_are_additive_and_do_not_seed_production_rows():
     assert cursor.executemany_calls == []
 
 
+def test_explicit_synthetic_seed_uses_a_future_database_clock_deadline():
+    cursor = FakeCursor(fetchone_result={"cnt": 0})
+    schema.apply_schema_migrations(FakeConnection(cursor), seed_sample_data=True)
+    [(sql, rows)] = cursor.executemany_calls
+    assert "DATE_ADD(UTC_TIMESTAMP(), INTERVAL 1 DAY)" in sql
+    assert len(rows) == 2
+    assert all(len(row) == 3 for row in rows)
+
+
+def test_repeated_seed_does_not_reopen_existing_items():
+    cursor = FakeCursor(fetchone_result={"cnt": 1})
+    schema.apply_schema_migrations(FakeConnection(cursor), seed_sample_data=True)
+    assert cursor.executemany_calls == []
+    assert not any("UPDATE raffle_items" in sql for sql, _ in cursor.executed)
+
+
 def test_invalid_database_identifier_is_rejected_before_opening_a_connection():
     with patch("schema.pymysql.connect") as connect:
         with pytest.raises(ValueError, match="DB_NAME"):

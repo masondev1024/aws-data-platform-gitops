@@ -76,13 +76,11 @@ SAMPLE_ITEMS = (
     (
         "나이키 덩크 로우 범고래",
         "국민 신발, 마지막 기회!",
-        "2026-04-30 18:00:00",
         "https://images.unsplash.com/photo-1595950653106-6c9ebd614d3a?w=500&q=80",
     ),
     (
         "애플 에어팟 맥스 실버",
         "노이즈 캔슬링 끝판왕",
-        "2026-05-05 12:00:00",
         "https://images.unsplash.com/photo-1613040809024-b4ef7ba99bc3?w=500&q=80",
     ),
 )
@@ -162,7 +160,7 @@ def apply_schema_migrations(connection, *, seed_sample_data: bool = False) -> No
                 cursor.executemany(
                     """
                     INSERT INTO raffle_items (title, description, end_time, image_url)
-                    VALUES (%s, %s, %s, %s)
+                    VALUES (%s, %s, DATE_ADD(UTC_TIMESTAMP(), INTERVAL 1 DAY), %s)
                     """,
                     SAMPLE_ITEMS,
                 )
