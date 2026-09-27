@@ -51,6 +51,21 @@ def test_mismatched_or_unreviewed_image_blocks_bootstrap(workload):
         delivery.validate_workload(workload, "registry.invalid/reviewed@sha256:" + "a" * 64)
 
 
+@pytest.mark.parametrize("key,value", [("argocd.argoproj.io/hook", "Sync"),
+                                       ("argocd.argoproj.io/hook-delete-policy", "HookFailed")])
+def test_migration_gate_cannot_be_removed_at_deploy_time(workload, key, value):
+    job = next(obj for obj in workload if obj["kind"] == "Job")
+    job["metadata"]["annotations"][key] = value
+    with pytest.raises(delivery.g.CheckFailed, match="PreSync"):
+        delivery.validate_workload(workload, "data-pipeline-app:pending-reviewed-release")
+
+
+def test_ambiguous_sync_request_cannot_be_reported_as_failed_or_retried_automatically():
+    source = (ROOT / "platform/live-lab/scripts/deploy_gitops_validation.py").read_text()
+    assert 'report["status"] = "sync_request_outcome_unknown"' in source
+    assert 'raise SyncRequestUnknown("sync request outcome unknown; inspect Application before retrying")' in source
+
+
 def test_bootstrap_cannot_apply_application_resources():
     source = (ROOT / "platform/live-lab/scripts/deploy_gitops_validation.py").read_text()
     assert '"sync": {"revision": a.gitops_revision, "prune": True}' in source

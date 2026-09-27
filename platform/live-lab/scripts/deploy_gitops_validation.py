@@ -27,12 +27,26 @@ g = installer.g
 APP_NAME = "data-pipeline-validation"
 
 
+class SyncRequestUnknown(g.CheckFailed):
+    """The server may have accepted the request; inspect state before retrying."""
+
+
 def render(path):
     return [d for d in yaml.safe_load_all(g.run(["kubectl", "kustomize", str(path)]).stdout) if d]
 
 
 def validate_workload(documents, image_reference):
     g.require(len(documents) > 0, "empty GitOps workload")
+    for kind, name in (("Job", "data-pipeline-schema-migration"), ("Rollout", "data-pipeline-rollout"),
+                       ("CronJob", "raffle-draw-job")):
+        matches = [obj for obj in documents if obj.get("kind") == kind]
+        g.require(len(matches) == 1 and matches[0].get("metadata", {}).get("name") == name,
+                  "expected exactly the approved migration, rollout and draw workloads")
+    job = next(obj for obj in documents if obj["kind"] == "Job")
+    annotations = job["metadata"].get("annotations", {})
+    g.require(annotations.get("argocd.argoproj.io/hook") == "PreSync" and
+              set(annotations.get("argocd.argoproj.io/hook-delete-policy", "").split(",")) == {"BeforeHookCreation", "HookSucceeded"},
+              "migration must gate sync with the reviewed PreSync hook policy")
     images = []
     for obj in documents:
         g.require(obj["kind"] not in {"Ingress", "Secret", "Namespace", "Role", "RoleBinding"},
@@ -211,7 +225,11 @@ def main():
             patch = [{"op": "test", "path": "/metadata/resourceVersion", "value": current["metadata"]["resourceVersion"]},
                      {"op": "add", "path": "/operation", "value": {"initiatedBy": {"username": "delivery-bootstrap"},
                       "sync": {"revision": a.gitops_revision, "prune": True}}}]
-            g.run(kube + ["-n", "argocd", "patch", "application", APP_NAME, "--type=json", "-p", json.dumps(patch)])
+            report["status"] = "sync_request_outcome_unknown"
+            try:
+                g.run(kube + ["-n", "argocd", "patch", "application", APP_NAME, "--type=json", "-p", json.dumps(patch)])
+            except g.CheckFailed as exc:
+                raise SyncRequestUnknown("sync request outcome unknown; inspect Application before retrying") from exc
             report["status"] = "sync_requested"
         finally:
             json.dump(report, handle, indent=2)
@@ -224,5 +242,6 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as exc:
-        print(json.dumps({"status": "failed", "error": str(exc) if isinstance(exc, g.CheckFailed) else "delivery_bootstrap_error"}))
+        print(json.dumps({"status": "unknown" if isinstance(exc, SyncRequestUnknown) else "failed",
+                          "error": str(exc) if isinstance(exc, g.CheckFailed) else "delivery_bootstrap_error"}))
         raise SystemExit(1)
