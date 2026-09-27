@@ -13,11 +13,13 @@ from datetime import datetime, timezone
 import json
 import os
 import re
+import secrets
 import time
 from typing import Any
 from uuid import uuid4
 
 import pymysql
+from werkzeug.security import generate_password_hash
 
 from db import db_tls_options
 
@@ -92,9 +94,10 @@ def select_or_create_user(cursor, username: str) -> int:
     row = cursor.fetchone()
     if row:
         return int(row["id"])
+    unusable_password = generate_password_hash(secrets.token_urlsafe(32))
     cursor.execute(
         "INSERT INTO users (username, password) VALUES (%s, %s)",
-        (username, "live-lab-recovery-drill-disabled-login"),
+        (username, unusable_password),
     )
     return int(cursor.lastrowid)
 

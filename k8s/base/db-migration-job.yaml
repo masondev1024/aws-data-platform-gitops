@@ -31,8 +31,20 @@ spec:
           env:
             - name: DEPLOYMENT_TIER
               value: production
+            - name: DB_REQUIRE_TLS
+              value: "true"
+            - name: DB_SSL_CA
+              value: /etc/rds-ca/global-bundle.pem
+          volumeMounts:
+            - name: rds-ca-bundle
+              mountPath: /etc/rds-ca
+              readOnly: true
           envFrom:
             - configMapRef:
                 name: raffle-config
             - secretRef:
-                name: raffle-secret
+                name: raffle-migration-secret
+      volumes:
+        - name: rds-ca-bundle
+          configMap:
+            name: rds-ca-bundle

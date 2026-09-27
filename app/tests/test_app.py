@@ -292,9 +292,10 @@ def test_outbox_failure_drill_rolls_back_before_an_orphaned_entry_can_commit(cli
     assert not any("INSERT INTO raffle_outbox_events" in statement for statement, _ in cursor.executed)
 
 
-def test_legacy_plaintext_password_is_rehashed_after_a_successful_login(client):
+@pytest.mark.parametrize("stored_password", ["legacy-password", "not-a-valid-werkzeug-hash"])
+def test_plaintext_or_invalid_password_hash_is_rejected_without_migration_write(client, stored_password):
     headers = csrf_headers(client)
-    cursor = FakeCursor(fetchone_result={"id": 7, "password": "legacy-password"})
+    cursor = FakeCursor(fetchone_result={"id": 7, "password": stored_password})
     connection = FakeConnection(cursor)
 
     with patch("app.get_db_connection", return_value=connection):
@@ -304,15 +305,9 @@ def test_legacy_plaintext_password_is_rehashed_after_a_successful_login(client):
             headers=headers,
         )
 
-    assert response.status_code == 200
-    update_parameters = next(
-        parameters
-        for statement, parameters in cursor.executed
-        if statement.startswith("UPDATE users SET password")
-    )
-    assert update_parameters[1] == 7
-    assert update_parameters[0] != "legacy-password"
-    assert connection.commit_count == 1
+    assert response.status_code == 401
+    assert connection.commit_count == 0
+    assert not any("UPDATE users SET password" in statement for statement, _ in cursor.executed)
 
 
 def test_hashed_password_does_not_need_a_migration_write(client):

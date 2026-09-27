@@ -91,10 +91,14 @@ EKS API는 기본적으로 private endpoint이며, 로컬에서 Terraform/Helm b
 
 ## 배포 전 조건
 
-클러스터에는 `raffle-config` ConfigMap과 `raffle-secret` Secret이 미리 있어야 합니다. 애플리케이션은 다음 환경 변수를 사용합니다.
+배포 namespace에는 다음 ConfigMap과 Secret을 먼저 준비합니다. 운영 overlay도 RDS 인증서를 검증하며, 관리 계정은 마이그레이션 Job에만 전달합니다.
 
-- ConfigMap: `DB_WRITER_HOST`, `DB_READER_HOST`, `DB_NAME`, `DB_USER`
-- Secret: `DB_PASSWORD`, `SECRET_KEY`
+- `raffle-config` ConfigMap: `DB_WRITER_HOST`, `DB_READER_HOST`, `DB_NAME`, `TRUSTED_HOSTS`(허용할 실제 서비스 호스트)
+- `rds-ca-bundle` ConfigMap: AWS 공식 RDS CA bundle을 담은 `global-bundle.pem` 키. 모든 DB 접근 워크로드에 읽기 전용으로 마운트합니다.
+- `raffle-secret` Secret: `DB_APP_USER`, `DB_APP_PASSWORD`, `SECRET_KEY`. 앱과 추첨 작업에 필요한 DML 계정만 사용합니다.
+- `raffle-migration-secret` Secret: `DB_ADMIN_USER`, `DB_ADMIN_PASSWORD`, `DB_APP_USER`, `DB_APP_PASSWORD`, `SECRET_KEY`. 스키마 및 최소 권한 계정 생성용이며 앱 Pod에는 전달하지 않습니다. `SECRET_KEY`는 공통 앱 모듈을 읽는 현재 마이그레이션 진입점의 초기화에 사용합니다.
+
+앱의 `DB_USER`/`DB_PASSWORD`는 이전 설정을 위한 호환 키입니다. 새 배포는 `DB_APP_*` 키를 사용합니다. 운영에서는 샘플 데이터와 장애 주입을 활성화하지 않습니다. 평문 비밀번호로 저장된 기존 로그인 계정은 더 이상 인증하지 않으므로 별도로 비밀번호를 재설정해야 합니다.
 
 기존 Terraform 코드에 평문으로 있던 RDS 비밀번호는 제거했습니다. 이전 값이 Git 이력에 남아 있으므로 실제 AWS 환경에서 즉시 비밀번호를 회전해야 합니다. 운영자 접속은 기본적으로 public SSH가 아니라 private subnet의 SSM 경로를 사용하며, SSH가 필요할 때만 `allowed_ssh_location`에 제한된 CIDR을 명시합니다.
 

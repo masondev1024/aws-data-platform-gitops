@@ -51,6 +51,28 @@ def test_mismatched_or_unreviewed_image_blocks_bootstrap(workload):
         delivery.validate_workload(workload, "registry.invalid/reviewed@sha256:" + "a" * 64)
 
 
+@pytest.mark.parametrize("overlay", ["prod", "validation"])
+def test_all_database_workloads_require_tls_and_separate_migration_credentials(overlay):
+    result = subprocess.run(["kubectl", "kustomize", str(ROOT / "k8s/overlays" / overlay)],
+                            text=True, capture_output=True, check=True, timeout=20)
+    workloads = [obj for obj in yaml.safe_load_all(result.stdout)
+                 if obj and obj["kind"] in {"Rollout", "Job", "CronJob"}]
+    assert len(workloads) == 3
+    for obj in workloads:
+        spec = obj["spec"]
+        if obj["kind"] == "CronJob":
+            spec = spec["jobTemplate"]["spec"]
+        pod = spec["template"]["spec"]
+        container = pod["containers"][0]
+        env = {item["name"]: item.get("value") for item in container["env"]}
+        assert env["DB_REQUIRE_TLS"] == "true"
+        assert env["DB_SSL_CA"] == "/etc/rds-ca/global-bundle.pem"
+        assert {"name": "rds-ca-bundle", "mountPath": "/etc/rds-ca", "readOnly": True} in container["volumeMounts"]
+        assert {"name": "rds-ca-bundle", "configMap": {"name": "rds-ca-bundle"}} in pod["volumes"]
+        expected = "raffle-migration-secret" if obj["kind"] == "Job" else "raffle-secret"
+        assert [item["secretRef"]["name"] for item in container["envFrom"] if "secretRef" in item] == [expected]
+
+
 @pytest.mark.parametrize("key,value", [("argocd.argoproj.io/hook", "Sync"),
                                        ("argocd.argoproj.io/hook-delete-policy", "HookFailed")])
 def test_migration_gate_cannot_be_removed_at_deploy_time(workload, key, value):

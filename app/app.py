@@ -1,7 +1,6 @@
 """D2C raffle application with transaction-safe event production."""
 
 from datetime import datetime, timedelta, timezone
-import hmac
 import json
 import os
 import re
@@ -236,11 +235,14 @@ def _rollback_quietly(connection) -> None:
         app.logger.exception("Database rollback failed")
 
 
-def _verify_password(stored_password: str, provided_password: str) -> tuple[bool, bool]:
-    """Return authentication result and whether a legacy plaintext hash needs upgrading."""
-    if stored_password.startswith(("pbkdf2:", "scrypt:")):
-        return check_password_hash(stored_password, provided_password), False
-    return hmac.compare_digest(stored_password, provided_password), True
+def _password_matches(stored_password: str, provided_password: str) -> bool:
+    """Verify only Werkzeug password hashes; malformed and legacy plaintext values fail closed."""
+    if not isinstance(stored_password, str) or not isinstance(provided_password, str):
+        return False
+    try:
+        return check_password_hash(stored_password, provided_password)
+    except (TypeError, ValueError):
+        return False
 
 
 def _is_duplicate_key_error(error: pymysql.err.IntegrityError) -> bool:
@@ -488,15 +490,8 @@ def api_login():
 
             if not user:
                 return jsonify({"status": "error", "message": "아이디와 비밀번호를 확인해주세요."}), 401
-            password_matches, upgrade_legacy_password = _verify_password(user["password"], password)
-            if not password_matches:
+            if not _password_matches(user["password"], password):
                 return jsonify({"status": "error", "message": "아이디와 비밀번호를 확인해주세요."}), 401
-            if upgrade_legacy_password:
-                cursor.execute(
-                    "UPDATE users SET password = %s WHERE id = %s",
-                    (generate_password_hash(password), user["id"]),
-                )
-                connection.commit()
     except pymysql.MySQLError:
         _rollback_quietly(connection)
         app.logger.exception("User login failed because of a database error")

@@ -14,6 +14,7 @@ GOVERNANCE_DIR = REPO_ROOT / "platform" / "governance"
 FIXTURES_DIR = GOVERNANCE_DIR / "fixtures"
 VALIDATION_OVERLAY = REPO_ROOT / "k8s" / "overlays" / "validation"
 EXPECTED_REPO = "https://github.com/masondev1024/aws-data-platform-gitops"
+FORBIDDEN_REPO_FIXTURE = "https://example.invalid/forbidden-governance.git"
 EXPECTED_NAMESPACE = "platform-validation"
 EXPECTED_SERVER = "https://kubernetes.default.svc"
 
@@ -423,6 +424,7 @@ def test_live_governance_positive_and_all_argo_denials_use_server(live_governanc
             return {"metadata": {"labels": v.labels}, "data": {"purpose": "disposable-argocd-governance-positive-control"}}
         return v.binding
     commands = []
+    created_repo_urls = []
     def fake_run(argv, **kw):
         commands.append(argv)
         if argv[0] == "kubectl":
@@ -431,7 +433,9 @@ def test_live_governance_positive_and_all_argo_denials_use_server(live_governanc
         if "create" in argv:
             app = json.loads(Path(argv[argv.index("--file") + 1]).read_text())
             spec = app["spec"]
-            if spec["source"]["repoURL"].startswith("https://example.invalid"):
+            repo_url = spec["source"]["repoURL"]
+            created_repo_urls.append(repo_url)
+            if repo_url == FORBIDDEN_REPO_FIXTURE:
                 return response(1, stderr="rpc error: code = InvalidArgument desc = application repo https://example.invalid/forbidden-governance.git is not permitted in project 'kyobo-platform-validation'")
             if spec["destination"]["namespace"] == "default":
                 return response(1, stderr="rpc error: code = InvalidArgument desc = application destination server 'https://kubernetes.default.svc' and namespace 'default' do not match any of the allowed destinations in project 'kyobo-platform-validation'")
@@ -444,6 +448,7 @@ def test_live_governance_positive_and_all_argo_denials_use_server(live_governanc
     monkeypatch.setattr(v, "get", get)
     monkeypatch.setattr(live_governance, "run", fake_run)
     v.positive_and_denials(tmp_path)
+    assert created_repo_urls == [EXPECTED_REPO, FORBIDDEN_REPO_FIXTURE, EXPECTED_REPO]
     assert len(v.report["checks"]) == 4
     assert sum("sync" in cmd for cmd in commands) == 2
     assert all(cmd[0] == "argocd" for cmd in commands if "create" in cmd or "sync" in cmd)
