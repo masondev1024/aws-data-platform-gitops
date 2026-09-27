@@ -293,10 +293,13 @@ def test_live_cli_uses_actual_identity_read_only_commands_and_final_resource_rea
     assert report["scope"] == "control_plane_only"
     assert calls[0][0] == ["kubectl", "--context", "validation-context", "config", "view", "--minify", "-o", "json"]
     assert "whoami" in calls[1][0]
-    assert sum("applications.argoproj.io" in command and "get" in command and "auth" not in command
-               for command, _ in calls) == 2
-    assert sum("rollouts.argoproj.io" in command and "get" in command and "auth" not in command
-               for command, _ in calls) == 2
+    def requested_resource(command: list[str]) -> str | None:
+        if "get" not in command or "auth" in command:
+            return None
+        return command[command.index("get") + 1]
+
+    assert sum(requested_resource(command) == "applications.argoproj.io" for command, _ in calls) == 2
+    assert sum(requested_resource(command) == "rollouts.argoproj.io" for command, _ in calls) == 2
     assert len(calls) == 2 + len(deployment.CHECKS) + 6
     permission_commands = [command for command, _ in calls if "can-i" in command]
     assert len(permission_commands) == len(deployment.CHECKS)
@@ -327,7 +330,7 @@ def test_live_cli_uses_actual_identity_read_only_commands_and_final_resource_rea
                 continue  # Namespace is checked against each dynamic CHECKS entry above.
             namespace = command[command.index("--namespace") + 1]
             assert namespace == (
-                "argocd" if "get" in command and "applications.argoproj.io" in command
+                "argocd" if requested_resource(command) == "applications.argoproj.io"
                 else deployment.NAMESPACE
             )
     assert "env" not in report and "containerStatuses" not in report
