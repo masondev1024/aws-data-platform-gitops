@@ -1,0 +1,113 @@
+- op: add
+  path: /spec/args/-
+  value:
+    name: alb-name
+- op: add
+  path: /spec/args/-
+  value:
+    name: alb-id
+- op: add
+  path: /spec/metrics/-
+  value:
+    name: alb-elb-error-rate
+    interval: 60s
+    count: 3
+    failureLimit: 0
+    inconclusiveLimit: 0
+    successCondition: "len(result[0].Values) >= 3 and all(result[0].Values, {# < 0.01})"
+    provider:
+      cloudWatch:
+        interval: 5m
+        metricDataQueries:
+          - id: rate
+            expression: "FILL(errors, 0) / requests"
+            returnData: true
+          - id: errors
+            metricStat:
+              metric:
+                namespace: AWS/ApplicationELB
+                metricName: HTTPCode_ELB_5XX_Count
+                dimensions:
+                  - name: LoadBalancer
+                    value: "app/{{args.alb-name}}/{{args.alb-id}}"
+              period: 60
+              stat: Sum
+              unit: Count
+            returnData: false
+          - id: requests
+            metricStat:
+              metric:
+                namespace: AWS/ApplicationELB
+                metricName: RequestCount
+                dimensions:
+                  - name: LoadBalancer
+                    value: "app/{{args.alb-name}}/{{args.alb-id}}"
+              period: 60
+              stat: Sum
+              unit: Count
+            returnData: false
+- op: add
+  path: /spec/metrics/-
+  value:
+    name: alb-target-error-rate
+    interval: 60s
+    count: 3
+    failureLimit: 0
+    inconclusiveLimit: 0
+    successCondition: "len(result[0].Values) >= 3 and all(result[0].Values, {# < 0.01})"
+    provider:
+      cloudWatch:
+        interval: 5m
+        metricDataQueries:
+          - id: rate
+            expression: "FILL(errors, 0) / requests"
+            returnData: true
+          - id: errors
+            metricStat:
+              metric:
+                namespace: AWS/ApplicationELB
+                metricName: HTTPCode_Target_5XX_Count
+                dimensions:
+                  - name: LoadBalancer
+                    value: "app/{{args.alb-name}}/{{args.alb-id}}"
+              period: 60
+              stat: Sum
+              unit: Count
+            returnData: false
+          - id: requests
+            metricStat:
+              metric:
+                namespace: AWS/ApplicationELB
+                metricName: RequestCount
+                dimensions:
+                  - name: LoadBalancer
+                    value: "app/{{args.alb-name}}/{{args.alb-id}}"
+              period: 60
+              stat: Sum
+              unit: Count
+            returnData: false
+- op: add
+  path: /spec/metrics/-
+  value:
+    name: alb-target-response-p95
+    interval: 60s
+    count: 3
+    failureLimit: 0
+    inconclusiveLimit: 0
+    successCondition: "len(result[0].Values) >= 3 and all(result[0].Values, {# < 0.5})"
+    provider:
+      cloudWatch:
+        interval: 5m
+        metricDataQueries:
+          - id: target_p95
+            metricStat:
+              metric:
+                namespace: AWS/ApplicationELB
+                metricName: TargetResponseTime
+                dimensions:
+                  - name: LoadBalancer
+                    value: "app/{{args.alb-name}}/{{args.alb-id}}"
+              period: 60
+              stat: p95
+              unit: Seconds
+            returnData: true

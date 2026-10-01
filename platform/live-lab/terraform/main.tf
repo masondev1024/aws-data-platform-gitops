@@ -258,10 +258,14 @@ resource "aws_eks_node_group" "lab" {
     max_unavailable = 1
   }
 
+  # Keep public egress routing available until the managed node group is fully deleted.
+  # Nodes need outbound access for bootstrap/image pulls, and Terraform reverses this
+  # dependency during destroy so route associations are not removed while nodes drain.
   depends_on = [
     aws_iam_role_policy_attachment.eks_worker_node,
     aws_iam_role_policy_attachment.eks_cni,
     aws_iam_role_policy_attachment.ecr_readonly,
+    aws_route_table_association.public,
   ]
 
   tags = {
@@ -411,12 +415,14 @@ resource "aws_iam_openid_connect_provider" "eks" {
 resource "aws_iam_policy" "aws_load_balancer_controller" {
   name        = "${local.name_prefix}-aws-load-balancer-controller"
   description = "Scoped bootstrap policy for the AWS Load Balancer Controller in the ephemeral validation cluster."
+  # EC2 authorizes CreateSecurityGroup against both the new SG and its VPC. Scope the VPC
+  # resource to this session VPC and require the exact cluster tag on the new SG; later SG
+  # rule changes and deletion remain constrained by VPC and cluster-resource tags.
   policy = templatefile("${path.module}/policies/aws-load-balancer-controller-policy.json", {
     region       = var.aws_region
     account      = var.aws_account_id
     cluster_name = aws_eks_cluster.lab.name
     vpc_arn      = aws_vpc.lab.arn
-    waf_arn      = aws_wafv2_web_acl.lab.arn
   })
 
   depends_on = [terraform_data.approval_gate]
@@ -448,6 +454,64 @@ resource "aws_iam_role" "aws_load_balancer_controller" {
 resource "aws_iam_role_policy_attachment" "aws_load_balancer_controller" {
   role       = aws_iam_role.aws_load_balancer_controller.name
   policy_arn = aws_iam_policy.aws_load_balancer_controller.arn
+}
+
+resource "aws_iam_policy" "argo_rollouts_cloudwatch" {
+  name        = "${local.name_prefix}-argo-rollouts-cloudwatch"
+  description = "Read-only CloudWatch metrics access for the session-scoped Argo Rollouts controller."
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "cloudwatch:GetMetricData"
+      Resource = "*"
+      Condition = {
+        StringEquals = {
+          "aws:RequestedRegion" = var.aws_region
+        }
+      }
+    }]
+  })
+
+  tags = {
+    Name = "${local.name_prefix}-argo-rollouts-cloudwatch"
+  }
+
+  depends_on = [terraform_data.approval_gate]
+}
+
+resource "aws_iam_role" "argo_rollouts_cloudwatch" {
+  # IAM role names are limited to 64 characters; keep this suffix short even
+  # when Terraform accepts the maximum session_id length.
+  name = "${local.name_prefix}-rollouts-cw"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Effect = "Allow"
+      Principal = {
+        Federated = aws_iam_openid_connect_provider.eks.arn
+      }
+      Condition = {
+        StringEquals = {
+          "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:aud" = "sts.amazonaws.com"
+          "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:sub" = "system:serviceaccount:argo-rollouts:argo-rollouts"
+        }
+      }
+    }]
+  })
+
+  tags = {
+    Name = "${local.name_prefix}-rollouts-cw"
+  }
+
+  depends_on = [terraform_data.approval_gate]
+}
+
+resource "aws_iam_role_policy_attachment" "argo_rollouts_cloudwatch" {
+  role       = aws_iam_role.argo_rollouts_cloudwatch.name
+  policy_arn = aws_iam_policy.argo_rollouts_cloudwatch.arn
 }
 
 resource "aws_wafv2_web_acl" "lab" {

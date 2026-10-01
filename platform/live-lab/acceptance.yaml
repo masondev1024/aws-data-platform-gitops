@@ -21,7 +21,7 @@ positive_acceptance:
   - name: bounded_soak_and_burst
     evidence: "k6 records 20 RPS list reads for 60 minutes followed by a 100 RPS, 5-minute burst; actual request count is in the session-wide <=200,000 request ledger."
   - name: canary_analysis_and_rollback
-    evidence: "Argo Rollouts observes 5-minute warmup windows and three fresh 30-second samples; missing/stale signals, >=1% 5xx, p95 >=500ms, outbox mismatch, or <100 successful canary applies block promotion and abort the canary."
+    evidence: "Argo Rollouts observes 5-minute warmup windows; Prometheus checks app-level canary signals at three 30-second intervals, while CloudWatch checks the dedicated ALB's ELB/target 5xx rates and target p95 at three 60-second intervals. Missing/incomplete request or latency samples, >=1% 5xx, p95 >=500ms, outbox mismatch, or <100 successful canary applies block promotion and abort the canary."
   - name: raffle_outbox_integrity
     evidence: "A unique synthetic user cohort is reconciled against entry and transactional outbox rows on writer and reader before and after recovery."
   - name: multiaz_writer_failover
@@ -29,7 +29,7 @@ positive_acceptance:
   - name: async_replica_promotion
     evidence: "Promotion requires stopped writers/CronJob, exact replicated entry/outbox marker, RDS read-replication Normal=true, and two recent non-negative acceptable replica-lag measurements; old writer is fenced before writes resume."
   - name: pod_and_release_recovery
-    evidence: "Pod deletion and intentionally unhealthy canary drills show replacement behavior and automatic rollout abort while stable traffic remains available."
+    evidence: "Pod termination uses a distroless-compatible 10-second preStop wait within a 60-second grace period; the live-lab Ingress configures 30-second ALB target deregistration. Pod deletion and unhealthy canary drills must still pass a fresh AWS run before this change is claimed as live-verified."
   - name: agentic_triage_boundary
     evidence: "Agent diagnosis cites collected evidence IDs, labels unavailable observations unknown, and cannot execute shell, SQL, Kubernetes writes, deployments or rollback."
   - name: scoped_teardown

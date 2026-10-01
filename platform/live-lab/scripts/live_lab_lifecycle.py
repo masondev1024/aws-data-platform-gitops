@@ -173,6 +173,34 @@ def _verify_security_group_rule(
     raise ValueError(f"EC2 success response did not prove exact rule state: {rule_id}")
 
 
+def _verify_secret(
+    arn: str, *, profile: str, region: str, aws_runner=subprocess.run
+) -> tuple[bool, str]:
+    """Verify a Secrets Manager tag-index candidate with DescribeSecret."""
+    parts = arn.split(":", 5)
+    if len(parts) != 6 or parts[0] != "arn" or parts[1] != "aws" or parts[2] != "secretsmanager" or parts[3] != region:
+        raise ValueError("Secrets Manager ARN does not match the selected AWS region")
+    if not parts[5].startswith("secret:") or len(parts[5]) <= len("secret:"):
+        raise ValueError("invalid Secrets Manager secret ARN")
+    command = [
+        "aws", "--profile", profile, "--region", region,
+        "secretsmanager", "describe-secret", "--secret-id", arn, "--output", "json",
+    ]
+    response = aws_runner(command, capture_output=True, text=True, check=False)
+    if response.returncode != 0:
+        error_text = f"{response.stderr}\n{response.stdout}"
+        if "(ResourceNotFoundException)" in error_text:
+            return False, "secretsmanager_describe_secret_not_found"
+        raise RuntimeError(f"could not verify Secrets Manager secret ARN: {response.stderr.strip()}")
+    try:
+        result = json.loads(response.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Secrets Manager DescribeSecret returned invalid JSON") from exc
+    if not isinstance(result, dict) or result.get("ARN") != arn:
+        raise ValueError("Secrets Manager DescribeSecret did not prove the exact secret ARN")
+    return True, "secretsmanager_describe_secret_found"
+
+
 def reconcile_inventory(
     source: str,
     target: str,
@@ -291,6 +319,17 @@ def reconcile_inventory(
                 )
             except ValueError:
                 unresolved_resources.append({"arn": arn, "verification": "ec2_response_ambiguous"})
+                continue
+            except (OSError, RuntimeError, TypeError):
+                unresolved_resources.append({"arn": arn, "verification": "service_verification_failed"})
+                continue
+        elif service == "secretsmanager" and resource.startswith("secret:"):
+            try:
+                is_live, verification = _verify_secret(
+                    arn, profile=profile, region=region, aws_runner=aws_runner
+                )
+            except ValueError:
+                unresolved_resources.append({"arn": arn, "verification": "secretsmanager_response_ambiguous"})
                 continue
             except (OSError, RuntimeError, TypeError):
                 unresolved_resources.append({"arn": arn, "verification": "service_verification_failed"})

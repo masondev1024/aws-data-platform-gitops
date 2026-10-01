@@ -177,10 +177,17 @@ python scripts/verify_gitops_deployment.py \
    통과시킵니다.
 3. 승인 요청은 DB row와 transactional outbox event를 같은 트랜잭션으로 기록하고,
    writer DB parity SLI가 실제 데이터 정합성을 측정합니다.
-4. Argo Rollouts는 HTTP 5xx·p95 latency·도메인 무결성 parity를 기준으로 canary를
-   승격하거나 stable로 자동 복귀시킵니다.
-5. 승인된 outbox는 별도 Kafka 이벤트 플랫폼에서 계약 검증·중복 제거·DLQ를 거쳐
+4. Argo Rollouts는 canary별 Prometheus 지표와 세션 ALB의 CloudWatch 5xx·target p95를
+   함께 확인해 승격하거나 stable로 자동 복귀시킵니다. ALB 신호는 전용 ALB 전체를
+   감시하고, canary 자체의 오류·정합성은 서비스 라벨이 붙은 Prometheus 지표가 맡습니다.
+5. Pod 종료에는 distroless 이미지에서 동작하는 preStop 대기와 60초 grace period를
+   두고, live-lab ALB target drain은 30초로 제한합니다.
+6. 승인된 outbox는 별도 Kafka 이벤트 플랫폼에서 계약 검증·중복 제거·DLQ를 거쳐
    S3 Parquet/Iceberg 계층으로 적재됩니다.
+
+CloudWatch canary gate와 종료/drain 설정은 현재 GitOps 매니페스트 및 로컬 계약 테스트에
+반영되어 있습니다. 이번 수정분의 실AWS 재검증은 별도 기록이 확인되기 전까지 완료된
+것으로 간주하지 않습니다.
 
 따라서 면접에서는 “Kafka를 사용했다”가 아니라, 내부 개발자 경험·배포 안전성·
 트랜잭션 정합성·데이터 레이크 소비까지 하나의 운영 경계로 설계한 이유와 실패 시

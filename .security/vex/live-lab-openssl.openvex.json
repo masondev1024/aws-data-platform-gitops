@@ -1,0 +1,28 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://github.com/masondev1024/aws-data-platform-gitops/blob/main/.security/vex/live-lab-openssl.openvex.json#2026-10-01",
+  "author": "Codex (AI-assisted repository assessment)",
+  "role": "Technical assessor",
+  "timestamp": "2026-10-01T05:40:55Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {"name": "CVE-2026-75804"},
+      "products": [
+        {"@id": "pkg:deb/debian/libssl3t64@3.5.7-1~deb13u2"}
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "This is a scoped application reachability assessment, not a package remediation. The container serves the Flask application over HTTP/TCP behind the ALB and uses TLS/TCP for its database connection; the repository contains no QUIC listener or QUIC client path. The vulnerable OpenSSL QUIC flow-control code is therefore not in this service's execution path. The package remains present at the version identified by the scanner. Reassess by 2026-10-14 and replace the pinned Distroless Debian 13 base with an official fixed digest as soon as one is available."
+    },
+    {
+      "vulnerability": {"name": "CVE-2026-84782"},
+      "products": [
+        {"@id": "pkg:deb/debian/libssl3t64@3.5.7-1~deb13u2"}
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "This is a scoped application reachability assessment, not a package remediation. The container serves the Flask application over HTTP/TCP behind the ALB and uses TLS/TCP for its database connection; the repository contains no DTLS-over-UDP listener or client path. The vulnerable OpenSSL DTLS retransmission path is therefore not in this service's execution path. The package remains present at the version identified by the scanner. Reassess by 2026-10-14 and replace the pinned Distroless Debian 13 base with an official fixed digest as soon as one is available."
+    }
+  ]
+}

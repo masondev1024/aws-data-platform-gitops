@@ -12,7 +12,6 @@ VALUES = {
     "account": "123456789012",
     "cluster_name": "kyobo-test-0001",
     "vpc_arn": "arn:aws:ec2:ap-northeast-2:123456789012:vpc/vpc-0123456789abcdef0",
-    "waf_arn": "arn:aws:wafv2:ap-northeast-2:123456789012:regional/webacl/kyobo-test-0001-web-acl/01234567-abcd-0123-abcd-0123456789ab",
 }
 CLUSTER_TAG = "elbv2.k8s.aws/cluster"
 
@@ -53,7 +52,6 @@ def test_rendered_policy_is_below_iam_size_limit_and_scoped():
 def test_policy_fits_even_at_the_longest_accepted_session_name():
     values = dict(VALUES)
     values["cluster_name"] = "kyobo-" + "a" * 41
-    values["waf_arn"] = values["waf_arn"].replace(VALUES["cluster_name"], values["cluster_name"])
     _, policy = rendered_policy(values)
     assert len(json.dumps(policy, separators=(",", ":")).encode()) <= 6144
 
@@ -93,13 +91,12 @@ def test_elbv2_mutations_bind_region_account_and_cluster_tag():
             "elasticloadbalancing:DescribeRules", "elasticloadbalancing:DescribeSSLPolicies",
             "elasticloadbalancing:DescribeTags", "elasticloadbalancing:DescribeTargetGroupAttributes",
             "elasticloadbalancing:DescribeTargetGroups", "elasticloadbalancing:DescribeTargetHealth",
-            "elasticloadbalancing:GetLoadBalancerWebACL",
         } for action in actions):
             assert statement["Resource"] != "*"
             assert statement["Condition"]["StringEquals"][f"aws:ResourceTag/{CLUSTER_TAG}"] == VALUES["cluster_name"]
 
 
-def test_security_group_and_wafv2_authority_is_vpc_and_session_bounded():
+def test_security_group_create_is_region_scoped_and_mutations_are_vpc_session_bounded():
     _, policy = rendered_policy()
     ingress = statements_for(policy, "ec2:AuthorizeSecurityGroupIngress")[0]
     assert ingress["Resource"] == f"arn:aws:ec2:{VALUES['region']}:{VALUES['account']}:security-group/*"
@@ -107,23 +104,19 @@ def test_security_group_and_wafv2_authority_is_vpc_and_session_bounded():
 
     create_sg = statements_for(policy, "ec2:CreateSecurityGroup")
     assert len(create_sg) == 2
-    assert VALUES["vpc_arn"] in [item["Resource"] for item in create_sg]
-    scoped_sg = next(item for item in create_sg if isinstance(item["Resource"], str)
-                     and item["Resource"].endswith(":security-group/*"))
-    assert scoped_sg["Condition"]["ArnEquals"]["ec2:Vpc"] == VALUES["vpc_arn"]
-    assert scoped_sg["Condition"]["StringEquals"][f"aws:RequestTag/{CLUSTER_TAG}"] == VALUES["cluster_name"]
-
-    associate = statements_for(policy, "wafv2:AssociateWebACL")[0]
-    assert associate["Resource"] == VALUES["waf_arn"]
-    alb_association = statements_for(policy, "elasticloadbalancing:CreateWebACLAssociation")[0]
-    assert alb_association["Resource"] == (
-        f"arn:aws:elasticloadbalancing:{VALUES['region']}:{VALUES['account']}:*"
-    )
-    assert alb_association["Condition"]["StringEquals"][f"aws:ResourceTag/{CLUSTER_TAG}"] == VALUES["cluster_name"]
+    by_resource = {item["Resource"]: item for item in create_sg}
+    assert set(by_resource) == {
+        VALUES["vpc_arn"],
+        f"arn:aws:ec2:{VALUES['region']}:{VALUES['account']}:security-group/*",
+    }
+    assert by_resource[VALUES["vpc_arn"]].get("Condition") is None
+    assert by_resource[f"arn:aws:ec2:{VALUES['region']}:{VALUES['account']}:security-group/*"]["Condition"]["StringEquals"] == {
+        f"aws:RequestTag/{CLUSTER_TAG}": VALUES["cluster_name"]
+    }
 
     all_actions = [action for statement in policy["Statement"]
                    for action in (statement["Action"] if isinstance(statement["Action"], list) else [statement["Action"]])]
-    assert not any(action.startswith(("shield:", "waf-regional:")) for action in all_actions)
+    assert not any(action.startswith(("shield:", "waf-regional:", "wafv2:")) for action in all_actions)
     assert "elasticloadbalancing:SetWebAcl" not in all_actions
 
 
@@ -131,6 +124,6 @@ def test_terraform_renders_scope_and_helm_disables_unscoped_features():
     main = MAIN_PATH.read_text(encoding="utf-8")
     bootstrap = BOOTSTRAP_PATH.read_text(encoding="utf-8")
     assert 'templatefile("${path.module}/policies/aws-load-balancer-controller-policy.json"' in main
-    for value in ("region", "account", "cluster_name", "vpc_arn", "waf_arn"):
+    for value in ("region", "account", "cluster_name", "vpc_arn"):
         assert re.search(rf"\b{value}\s*=", main)
-    assert "--set enableShield=false --set enableWaf=false --set enableWafv2=true" in bootstrap
+    assert "--set enableShield=false --set enableWaf=false --set enableWafv2=false" in bootstrap

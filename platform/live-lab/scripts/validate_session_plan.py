@@ -59,7 +59,7 @@ def walk(module: dict):
 
 
 def validate(path: str, account: str, region: str, session: str, approval: str, budget: float,
-             hours: float = 3, reserve: float = 1, requests: int = 40_000) -> list[str]:
+             hours: float = 3, reserve: float = 1, requests: int = 102_000) -> list[str]:
     cost = estimate(hours, requests, budget, reserve)
     if not cost["within_budget"]:
         raise ValueError("estimated session including reserve exceeds approved budget")
@@ -166,7 +166,7 @@ def main() -> int:
     parser.add_argument("--budget", type=float, default=5.5)
     parser.add_argument("--hours", type=float, default=3)
     parser.add_argument("--reserve", type=float, default=1)
-    parser.add_argument("--requests", type=int, default=40_000)
+    parser.add_argument("--requests", type=int, default=102_000)
     args = parser.parse_args()
     try:
         resources = validate(args.plan_json, args.account, args.region, args.session, args.approval,

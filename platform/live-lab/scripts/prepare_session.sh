@@ -12,7 +12,7 @@ AWS_REGION="${AWS_REGION:-ap-northeast-2}"
 SESSION_HOURS="${SESSION_HOURS:-3}"
 SESSION_BUDGET_USD="${SESSION_BUDGET_USD:-5.50}"
 SESSION_RESERVE_USD="${SESSION_RESERVE_USD:-1.00}"
-SESSION_REQUESTS="${SESSION_REQUESTS:-40000}"
+SESSION_REQUESTS="${SESSION_REQUESTS:-102000}"
 # Fail before even the identity query; no cloud side effects are needed to reject cost.
 python3 platform/live-lab/scripts/estimate_session_cost.py \
   --hours "$SESSION_HOURS" --budget "$SESSION_BUDGET_USD" \
