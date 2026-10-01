@@ -1,3 +1,14 @@
+- op: add
+  path: /spec/template/spec/terminationGracePeriodSeconds
+  value: 60
+- op: add
+  path: /spec/template/spec/containers/0/lifecycle
+  value:
+    preStop:
+      exec:
+        # The app image is distroless (no shell); keep serving while the
+        # endpoint and ALB target deregistration propagate before SIGTERM.
+        command: ["/usr/bin/python3", "-c", "import time; time.sleep(10)"]
 - op: replace
   path: /spec/template/spec/containers/0/env/1/value
   value: validation
@@ -31,3 +42,31 @@
         items:
           - key: global-bundle.pem
             path: global-bundle.pem
+- op: add
+  path: /spec/strategy/canary/steps/2/analysis/args/-
+  value:
+    name: alb-name
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.labels['live-lab.aws/alb-name']
+- op: add
+  path: /spec/strategy/canary/steps/2/analysis/args/-
+  value:
+    name: alb-id
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.labels['live-lab.aws/alb-id']
+- op: add
+  path: /spec/strategy/canary/steps/5/analysis/args/-
+  value:
+    name: alb-name
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.labels['live-lab.aws/alb-name']
+- op: add
+  path: /spec/strategy/canary/steps/5/analysis/args/-
+  value:
+    name: alb-id
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.labels['live-lab.aws/alb-id']

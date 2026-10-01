@@ -20,15 +20,9 @@
         "elasticloadbalancing:DescribeSSLPolicies", "elasticloadbalancing:DescribeTags",
         "elasticloadbalancing:DescribeTargetGroupAttributes", "elasticloadbalancing:DescribeTargetGroups",
         "elasticloadbalancing:DescribeTargetHealth",
-        "cognito-idp:DescribeUserPoolClient", "acm:DescribeCertificate", "iam:GetServerCertificate",
-        "wafv2:GetWebACLForResource"
+        "cognito-idp:DescribeUserPoolClient", "acm:DescribeCertificate", "iam:GetServerCertificate"
       ],
       "Resource": "*"
-    },
-    {
-      "Effect": "Allow",
-      "Action": ["wafv2:GetWebACL", "wafv2:AssociateWebACL", "wafv2:DisassociateWebACL"],
-      "Resource": "${waf_arn}"
     },
     {
       "Effect": "Allow",
@@ -63,9 +57,7 @@
         "elasticloadbalancing:DeleteTargetGroup", "elasticloadbalancing:RegisterTargets", "elasticloadbalancing:DeregisterTargets",
         "elasticloadbalancing:ModifyListener", "elasticloadbalancing:ModifyListenerAttributes",
         "elasticloadbalancing:AddListenerCertificates", "elasticloadbalancing:RemoveListenerCertificates",
-        "elasticloadbalancing:DeleteListener", "elasticloadbalancing:ModifyRule", "elasticloadbalancing:DeleteRule",
-        "elasticloadbalancing:GetLoadBalancerWebACL", "elasticloadbalancing:CreateWebACLAssociation",
-        "elasticloadbalancing:DeleteWebACLAssociation"
+        "elasticloadbalancing:DeleteListener", "elasticloadbalancing:ModifyRule", "elasticloadbalancing:DeleteRule"
       ],
       "Resource": "arn:aws:elasticloadbalancing:${region}:${account}:*",
       "Condition": {"StringEquals": {"aws:ResourceTag/elbv2.k8s.aws/cluster": "${cluster_name}"}}
@@ -98,8 +90,7 @@
       "Action": ["ec2:CreateSecurityGroup"],
       "Resource": "arn:aws:ec2:${region}:${account}:security-group/*",
       "Condition": {
-        "StringEquals": {"aws:RequestTag/elbv2.k8s.aws/cluster": "${cluster_name}"},
-        "ArnEquals": {"ec2:Vpc": "${vpc_arn}"}
+        "StringEquals": {"aws:RequestTag/elbv2.k8s.aws/cluster": "${cluster_name}"}
       }
     },
     {

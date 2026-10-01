@@ -30,7 +30,13 @@ context_endpoint="$(kubectl --context "$KUBE_CONTEXT" config view --minify -o js
 terraform_dir="platform/live-lab/terraform"
 vpc_id="$(terraform -chdir="$terraform_dir" output -raw vpc_id)"
 lbc_role_arn="$(terraform -chdir="$terraform_dir" output -raw aws_load_balancer_controller_role_arn)"
-[[ "$vpc_id" =~ ^vpc-[0-9a-f]+$ && "$lbc_role_arn" == "arn:aws:iam::${EXPECTED_ACCOUNT_ID}:role/kyobo-${SESSION_ID}-aws-load-balancer-controller" ]] || { echo "BLOCKED: Terraform outputs are not scoped to this session." >&2; exit 2; }
+rollouts_role_arn="$(terraform -chdir="$terraform_dir" output -raw aws_argo_rollouts_cloudwatch_role_arn)"
+[[ "$vpc_id" =~ ^vpc-[0-9a-f]+$ && \
+  "$lbc_role_arn" == "arn:aws:iam::${EXPECTED_ACCOUNT_ID}:role/kyobo-${SESSION_ID}-aws-load-balancer-controller" && \
+  "$rollouts_role_arn" == "arn:aws:iam::${EXPECTED_ACCOUNT_ID}:role/kyobo-${SESSION_ID}-rollouts-cw" ]] || {
+  echo "BLOCKED: Terraform outputs are not scoped to this session." >&2
+  exit 2
+}
 
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/live-lab-bootstrap.XXXXXX")"
 cleanup() { rm -rf "$tmp_dir"; }
@@ -53,6 +59,11 @@ kubectl --context "$KUBE_CONTEXT" create namespace monitoring --dry-run=client -
 kubectl --context "$KUBE_CONTEXT" apply --server-side --field-manager=live-lab-bootstrap --namespace argo-rollouts -f "$install_file" >/dev/null
 kubectl --context "$KUBE_CONTEXT" apply -f "$metrics_file" >/dev/null
 kubectl --context "$KUBE_CONTEXT" -n kube-system rollout status deployment/metrics-server --timeout=180s
+kubectl --context "$KUBE_CONTEXT" -n argo-rollouts rollout status deployment/argo-rollouts --timeout=180s
+
+kubectl --context "$KUBE_CONTEXT" -n argo-rollouts annotate serviceaccount argo-rollouts \
+  "eks.amazonaws.com/role-arn=$rollouts_role_arn" --overwrite >/dev/null
+kubectl --context "$KUBE_CONTEXT" -n argo-rollouts set env deployment/argo-rollouts "AWS_REGION=$AWS_REGION" >/dev/null
 kubectl --context "$KUBE_CONTEXT" -n argo-rollouts rollout status deployment/argo-rollouts --timeout=180s
 
 export LIVE_LAB_LBC_ROLE_ARN="$lbc_role_arn"
@@ -125,7 +136,7 @@ helm --repository-config "$helm_repo_config" --repository-cache "$helm_repo_cach
 helm --kube-context "$KUBE_CONTEXT" --repository-config "$helm_repo_config" --repository-cache "$helm_repo_cache" upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
   --version 3.5.0 --namespace kube-system --set-string "clusterName=$CLUSTER_NAME" \
   --set-string "region=$AWS_REGION" --set-string "vpcId=$vpc_id" \
-  --set enableShield=false --set enableWaf=false --set enableWafv2=true \
+  --set enableShield=false --set enableWaf=false --set enableWafv2=false \
   --set serviceAccount.create=false --set serviceAccount.name=aws-load-balancer-controller \
   --wait --timeout 5m
 helm --kube-context "$KUBE_CONTEXT" --repository-config "$helm_repo_config" --repository-cache "$helm_repo_cache" upgrade --install live-lab-observability prometheus-community/kube-prometheus-stack \

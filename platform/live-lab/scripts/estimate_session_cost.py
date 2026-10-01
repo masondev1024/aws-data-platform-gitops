@@ -104,7 +104,7 @@ def estimate(hours: float, requests: int, budget: float, reserve: float) -> dict
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hours", type=float, default=3)
-    parser.add_argument("--requests", type=int, default=40_000)
+    parser.add_argument("--requests", type=int, default=102_000)
     parser.add_argument("--budget", type=float, default=5.50)
     parser.add_argument("--reserve", type=float, default=1.00)
     parser.add_argument("--output", help="Optional private JSON evidence path")

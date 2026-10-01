@@ -75,6 +75,8 @@ def test_root_aws_resources_depend_on_approval_gate_and_alb_controller_bootstrap
         "aws_ecr_repository\" \"app",
         "aws_iam_policy\" \"aws_load_balancer_controller",
         "aws_iam_role\" \"aws_load_balancer_controller",
+        "aws_iam_policy\" \"argo_rollouts_cloudwatch",
+        "aws_iam_role\" \"argo_rollouts_cloudwatch",
         "aws_wafv2_web_acl\" \"lab",
     ]:
         pattern = rf'resource "{resource_name}" \{{(?P<body>.*?)\n\}}'
@@ -88,6 +90,18 @@ def test_root_aws_resources_depend_on_approval_gate_and_alb_controller_bootstrap
     assert "elasticloadbalancing:CreateLoadBalancer" in policy
     assert "elasticloadbalancing:CreateTargetGroup" in policy
     assert "elasticloadbalancing:DescribeListenerCertificates" in policy
+
+
+def test_managed_node_group_keeps_public_egress_until_node_deletion_completes():
+    main = read("platform/live-lab/terraform/main.tf")
+    node_group = re.search(
+        r'resource "aws_eks_node_group" "lab" \{(?P<body>.*?)\n\}',
+        main,
+        re.DOTALL,
+    )
+
+    assert node_group is not None
+    assert "aws_route_table_association.public" in node_group.group("body")
 
 
 def test_alb_controller_create_time_tag_permission_is_scoped_and_conditioned():
@@ -344,7 +358,7 @@ def test_node_default_can_schedule_documented_eks_request_floor():
 def test_cost_estimator_stays_under_approved_ceiling_and_fails_closed():
     script = LIVE_LAB / "scripts/estimate_session_cost.py"
     result = subprocess.run(
-        ["python3", str(script), "--hours", "3", "--requests", "40000", "--budget", "5.50", "--reserve", "1.00"],
+        ["python3", str(script), "--hours", "3", "--requests", "102000", "--budget", "5.50", "--reserve", "1.00"],
         check=False,
         capture_output=True,
         text=True,
@@ -352,12 +366,12 @@ def test_cost_estimator_stays_under_approved_ceiling_and_fails_closed():
     assert result.returncode == 0, result.stderr
     estimate = json.loads(result.stdout)
     assert estimate["region"] == "ap-northeast-2"
-    assert estimate["base_estimate_usd"] == 4.0594
-    assert estimate["planning_total_usd"] == 5.0594
+    assert estimate["base_estimate_usd"] == 4.0966
+    assert estimate["planning_total_usd"] == 5.0966
     assert estimate["within_budget"] is True
 
     over_budget = subprocess.run(
-        ["python3", str(script), "--hours", "3", "--requests", "40000", "--budget", "4.5", "--reserve", "1.00"],
+        ["python3", str(script), "--hours", "3", "--requests", "102000", "--budget", "4.5", "--reserve", "1.00"],
         check=False,
         capture_output=True,
         text=True,
@@ -429,6 +443,92 @@ def test_rendered_live_rollout_preserves_base_container_and_uses_separate_migrat
     assert migration_env["LIVE_LAB_SYNTHETIC_SEED"] == "true"
 
 
+def test_live_lab_rollout_shutdown_and_alb_drain_are_bounded_and_compatible_with_distroless():
+    rendered = subprocess.run(
+        ["kubectl", "kustomize", str(LIVE_LAB / "manifests" / "app")],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rendered.returncode == 0, rendered.stderr
+    documents = [item for item in yaml.safe_load_all(rendered.stdout) if item]
+    rollout = next(item for item in documents if item.get("kind") == "Rollout")
+    pod_spec = rollout["spec"]["template"]["spec"]
+    container = pod_spec["containers"][0]
+    ingress = next(item for item in documents if item.get("kind") == "Ingress")
+
+    assert pod_spec["terminationGracePeriodSeconds"] == 60
+    assert container["lifecycle"]["preStop"]["exec"]["command"] == [
+        "/usr/bin/python3", "-c", "import time; time.sleep(10)"
+    ]
+    assert ingress["metadata"]["annotations"]["alb.ingress.kubernetes.io/target-group-attributes"] == (
+        "deregistration_delay.timeout_seconds=30"
+    )
+    base_rollout = yaml.safe_load(read("k8s/base/rollout.yaml"))
+    assert "terminationGracePeriodSeconds" not in base_rollout["spec"]["template"]["spec"]
+    assert "lifecycle" not in base_rollout["spec"]["template"]["spec"]["containers"][0]
+
+
+def test_live_lab_canary_analysis_gates_on_external_cloudwatch_metrics():
+    rendered = subprocess.run(
+        ["kubectl", "kustomize", str(LIVE_LAB / "manifests" / "app")],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rendered.returncode == 0, rendered.stderr
+    documents = [item for item in yaml.safe_load_all(rendered.stdout) if item]
+    analysis = next(
+        item for item in documents
+        if item.get("kind") == "AnalysisTemplate" and item.get("metadata", {}).get("name") == "data-pipeline-canary"
+    )
+    metrics = {item["name"]: item for item in analysis["spec"]["metrics"]}
+    assert {
+        "alb-elb-error-rate",
+        "alb-target-error-rate",
+        "alb-target-response-p95",
+    } <= set(metrics)
+    for name in ("alb-elb-error-rate", "alb-target-error-rate"):
+        metric = metrics[name]
+        assert metric["provider"]["cloudWatch"]["interval"] == "5m"
+        assert "len(result[0].Values) >= 3" in metric["successCondition"]
+        assert "FILL(" in str(metric["provider"]["cloudWatch"]["metricDataQueries"])
+    queries = [
+        query
+        for name in metrics
+        if name.startswith("alb-")
+        for query in metrics[name]["provider"]["cloudWatch"]["metricDataQueries"]
+    ]
+    metric_names = [
+        query.get("metricStat", {}).get("metric", {}).get("metricName")
+        for query in queries
+    ]
+    assert "HTTPCode_ELB_5XX_Count" in metric_names
+    assert "HTTPCode_Target_5XX_Count" in metric_names
+    assert "TargetResponseTime" in metric_names
+    assert all("LoadBalancer" in str(query) for query in queries if "metricStat" in query)
+    assert all("TargetGroup" not in str(query) for query in queries if "metricStat" in query)
+    assert "live-lab.aws/alb-name" in read("platform/live-lab/scripts/deploy_live_lab.sh")
+
+
+def test_argo_rollouts_cloudwatch_role_is_minimal_and_bound_to_its_service_account():
+    main = read("platform/live-lab/terraform/main.tf")
+    outputs = read("platform/live-lab/terraform/outputs.tf")
+    bootstrap = read("platform/live-lab/scripts/bootstrap_cluster.sh")
+
+    assert 'resource "aws_iam_policy" "argo_rollouts_cloudwatch"' in main
+    assert re.search(r'Action\s*=\s*"cloudwatch:GetMetricData"', main)
+    assert 'Resource = "*"' in main
+    assert '"aws:RequestedRegion" = var.aws_region' in main
+    assert 'system:serviceaccount:argo-rollouts:argo-rollouts' in main
+    assert "aws_argo_rollouts_cloudwatch_role_arn" in outputs
+    assert 'annotate serviceaccount argo-rollouts' in bootstrap
+    assert '"eks.amazonaws.com/role-arn=$rollouts_role_arn"' in bootstrap
+    assert 'AWS_REGION=$AWS_REGION' in bootstrap
+    assert 'name = "${local.name_prefix}-rollouts-cw"' in main
+    assert len("kyobo-" + "x" * 41 + "-rollouts-cw") <= 64
+
+
 def test_migration_patch_has_full_security_context_not_only_partial_scanner_patch():
     patch = read("platform/live-lab/manifests/app/patches/patch-migration-live-lab.yaml")
 
@@ -454,7 +554,8 @@ def test_runtime_renderer_never_needs_a_local_secret_file_and_renders_session_en
     assert "chmod 600" in renderer
     assert "DB_WRITER_HOST" in renderer and "DB_READER_HOST" in renderer
     assert "ALB_CERTIFICATE_ARN" in renderer
-    assert "WAF_WEB_ACL_ARN" in renderer
+    assert "WAF_WEB_ACL_ARN" not in renderer
+    assert "associate_waf_live.py" in read("platform/live-lab/scripts/deploy_live_lab.sh")
     assert "raffle-secret.yaml" not in renderer
     secret_script = read("platform/live-lab/scripts/create_session_secrets.sh")
     assert "--secret-string file:///dev/stdin" in secret_script
@@ -504,7 +605,6 @@ def test_runtime_renderer_exercises_bootstrap_app_boundary_and_private_output(tm
         "DB_WRITER_HOST": "writer.internal",
         "DB_READER_HOST": "reader.internal",
         "ALB_CERTIFICATE_ARN": "arn:aws:acm:ap-northeast-2:123456789012:certificate/01234567-abcd-0123-abcd-0123456789ab",
-        "WAF_WEB_ACL_ARN": "arn:aws:wafv2:ap-northeast-2:123456789012:regional/webacl/kyobo-lab/01234567-abcd-0123-abcd-0123456789ab",
         "OPERATOR_CIDR": "203.0.113.10/32",
         "SESSION_ID": "kyobo-lab-0001",
         "APPROVAL_ID": "SS0-20260923-test",
@@ -517,7 +617,7 @@ def test_runtime_renderer_exercises_bootstrap_app_boundary_and_private_output(tm
     assert not {"Secret", "Namespace", "Deployment", "Role", "RoleBinding", "ServiceAccount"}.intersection(d["kind"] for d in app if d)
     ingress = next(d for d in app if d and d["kind"] == "Ingress")
     assert ingress["metadata"]["annotations"]["alb.ingress.kubernetes.io/certificate-arn"] == test_env["ALB_CERTIFICATE_ARN"]
-    assert ingress["metadata"]["annotations"]["alb.ingress.kubernetes.io/wafv2-acl-arn"] == test_env["WAF_WEB_ACL_ARN"]
+    assert "alb.ingress.kubernetes.io/wafv2-acl-arn" not in ingress["metadata"]["annotations"]
     assert ingress["metadata"]["annotations"]["alb.ingress.kubernetes.io/tags"].endswith("Session=kyobo-lab-0001,Approval=SS0-20260923-test,ManagedBy=terraform")
     config = next(d for d in yaml.safe_load_all((lab / "evidence/rendered-bootstrap-manifests.yaml").read_text()) if d and d["kind"] == "ConfigMap")
     assert config["data"]["DB_WRITER_HOST"] == "writer.internal"

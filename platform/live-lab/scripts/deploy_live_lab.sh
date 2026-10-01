@@ -162,4 +162,46 @@ alb_dns="$(kube --namespace "$namespace" get ingress data-pipeline-ingress -o js
 [[ "$alb_dns" == *.ap-northeast-2.elb.amazonaws.com ]] || { echo "BLOCKED: session ALB DNS did not resolve to the expected Seoul ELB domain." >&2; exit 2; }
 printf '%s\n' "$alb_dns" > "$evidence_dir/alb-dns.txt"
 chmod 600 "$evidence_dir/alb-dns.txt"
-echo "Deployment is Available; ALB DNS was recorded at $evidence_dir/alb-dns.txt."
+waf_arn="$(terraform -chdir="$terraform_dir" output -raw waf_web_acl_arn)"
+python3 platform/live-lab/scripts/associate_waf_live.py \
+  --account "$EXPECTED_ACCOUNT_ID" --region "$AWS_REGION" --session "$SESSION_ID" \
+  --approval "$APPROVAL_ID" --cluster "$cluster_name" --alb-dns "$alb_dns" \
+  --web-acl-arn "$waf_arn" --profile "$AWS_PROFILE" \
+  --evidence "$evidence_dir/waf-association.json"
+read -r alb_metric_name alb_metric_id < <(python3 - "$evidence_dir/waf-association.json" <<'PY'
+import json
+import re
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    report = json.load(handle)
+if report.get("status") != "verified":
+    raise SystemExit("BLOCKED: verified ALB association evidence is required before configuring canary metrics")
+name = report.get("alb_cloudwatch_load_balancer_name", "")
+resource_id = report.get("alb_cloudwatch_load_balancer_id", "")
+dimension = report.get("alb_cloudwatch_load_balancer_dimension", "")
+if not re.fullmatch(r"[A-Za-z0-9-]{1,32}", name):
+    raise SystemExit("BLOCKED: invalid session ALB CloudWatch name")
+if not re.fullmatch(r"[a-f0-9]{16,32}", resource_id):
+    raise SystemExit("BLOCKED: invalid session ALB CloudWatch resource ID")
+if dimension != f"app/{name}/{resource_id}":
+    raise SystemExit("BLOCKED: ALB CloudWatch dimension does not match the verified ARN")
+print(name, resource_id)
+PY
+)
+[[ "$alb_metric_name" =~ ^[A-Za-z0-9-]{1,32}$ && "$alb_metric_id" =~ ^[a-f0-9]{16,32}$ ]] || {
+  echo "BLOCKED: verified ALB CloudWatch identifiers are invalid." >&2
+  exit 2
+}
+rollout_labels="$(python3 - "$alb_metric_name" "$alb_metric_id" <<'PY'
+import json
+import sys
+
+print(json.dumps({"metadata": {"labels": {
+    "live-lab.aws/alb-name": sys.argv[1],
+    "live-lab.aws/alb-id": sys.argv[2],
+}}}))
+PY
+)"
+kube --namespace "$namespace" patch rollout data-pipeline-rollout --type=merge --patch "$rollout_labels" >/dev/null
+echo "Deployment is Available; scoped WAF association is verified. ALB DNS is at $evidence_dir/alb-dns.txt."

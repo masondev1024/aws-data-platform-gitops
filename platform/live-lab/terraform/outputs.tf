@@ -68,8 +68,13 @@ output "aws_load_balancer_controller_role_arn" {
   value       = aws_iam_role.aws_load_balancer_controller.arn
 }
 
-output "waf_association_managed_by_ingress" {
-  description = "The session ingress annotation attaches this exact WAF ACL through AWS Load Balancer Controller."
+output "aws_argo_rollouts_cloudwatch_role_arn" {
+  description = "Session-scoped IRSA role for Argo Rollouts CloudWatch analysis."
+  value       = aws_iam_role.argo_rollouts_cloudwatch.arn
+}
+
+output "waf_association_managed_by_operator" {
+  description = "The local scoped deployment step associates the verified session ACL to the verified ALB."
   value       = true
 }
 
