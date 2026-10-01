@@ -106,13 +106,13 @@ jobs:
             }
             docker pull "$image_uri@$image_digest"
             registry_image_id="$(docker image inspect --format '{{.Id}}' "$image_uri@$image_digest")"
-            trivy image --image-src docker --ignorefile .trivyignore --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL \
+            trivy image --image-src docker --ignorefile .trivyignore --vex .security/vex/live-lab-openssl.openvex.json --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL \
               --scanners vuln "$image_uri@$image_digest"
             publication_mode="reused-existing-tag"
           elif grep -q "ImageNotFoundException" "$describe_err"; then
             docker build --pull --tag "$image_uri:$IMAGE_TAG" ./app
             local_image_id="$(docker image inspect --format '{{.Id}}' "$image_uri:$IMAGE_TAG")"
-            trivy image --image-src docker --ignorefile .trivyignore --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL \
+            trivy image --image-src docker --ignorefile .trivyignore --vex .security/vex/live-lab-openssl.openvex.json --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL \
               --scanners vuln "$image_uri:$IMAGE_TAG"
             docker push "$image_uri:$IMAGE_TAG"
             image_digest="$(aws ecr describe-images \
