@@ -10,7 +10,7 @@ import math
 import os
 
 
-SNAPSHOT_DATE = date(2026, 9, 23)
+SNAPSHOT_DATE = date(2026, 10, 4)
 MONTH_HOURS = 730
 RATES = {
     "eks_cluster_hour": 0.10,
@@ -71,7 +71,7 @@ def estimate(hours: float, requests: int, budget: float, reserve: float) -> dict
     return {
         "schema_version": 1,
         "price_list_snapshot_date": SNAPSHOT_DATE.isoformat(),
-        "ec2_rds_rates_rechecked_date": "2026-09-27",
+        "ec2_rds_rates_rechecked_date": "2026-10-04",
         "rds_standard_support_engine": "MySQL 8.4; extended support disabled",
         "region": "ap-northeast-2",
         "hours": hours,
@@ -104,7 +104,7 @@ def estimate(hours: float, requests: int, budget: float, reserve: float) -> dict
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hours", type=float, default=3)
-    parser.add_argument("--requests", type=int, default=102_000)
+    parser.add_argument("--requests", type=int, default=200_000)
     parser.add_argument("--budget", type=float, default=5.50)
     parser.add_argument("--reserve", type=float, default=1.00)
     parser.add_argument("--output", help="Optional private JSON evidence path")

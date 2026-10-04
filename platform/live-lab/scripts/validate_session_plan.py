@@ -59,13 +59,22 @@ def walk(module: dict):
 
 
 def validate(path: str, account: str, region: str, session: str, approval: str, budget: float,
-             hours: float = 3, reserve: float = 1, requests: int = 102_000) -> list[str]:
+             hours: float = 3, reserve: float = 1, requests: int = 200_000) -> list[str]:
     cost = estimate(hours, requests, budget, reserve)
     if not cost["within_budget"]:
         raise ValueError("estimated session including reserve exceeds approved budget")
     if not math.isfinite(hours) or not 1 <= hours <= 3:
         raise ValueError("approved hours must be between one and three")
     plan = json.loads(Path(path).read_text(encoding="utf-8"))
+    format_version = plan.get("format_version")
+    if not isinstance(format_version, str) or not re.fullmatch(r"1\.[0-9]+", format_version):
+        raise ValueError("Terraform plan JSON format is missing or has an unsupported major version")
+    if plan.get("errored") is not False:
+        raise ValueError("Terraform plan is errored or does not explicitly report errored=false")
+    if plan.get("applyable") is not True:
+        raise ValueError("Terraform plan is not applyable")
+    if plan.get("complete") is not True:
+        raise ValueError("Terraform plan is incomplete")
     variables = {key: item.get("value") for key, item in plan.get("variables", {}).items()}
     expected_variables = {
         "aws_account_id": account,
@@ -166,7 +175,7 @@ def main() -> int:
     parser.add_argument("--budget", type=float, default=5.5)
     parser.add_argument("--hours", type=float, default=3)
     parser.add_argument("--reserve", type=float, default=1)
-    parser.add_argument("--requests", type=int, default=102_000)
+    parser.add_argument("--requests", type=int, default=200_000)
     args = parser.parse_args()
     try:
         resources = validate(args.plan_json, args.account, args.region, args.session, args.approval,

@@ -358,7 +358,7 @@ def test_node_default_can_schedule_documented_eks_request_floor():
 def test_cost_estimator_stays_under_approved_ceiling_and_fails_closed():
     script = LIVE_LAB / "scripts/estimate_session_cost.py"
     result = subprocess.run(
-        ["python3", str(script), "--hours", "3", "--requests", "102000", "--budget", "5.50", "--reserve", "1.00"],
+        ["python3", str(script), "--hours", "3", "--requests", "200000", "--budget", "5.50", "--reserve", "1.00"],
         check=False,
         capture_output=True,
         text=True,
@@ -366,12 +366,12 @@ def test_cost_estimator_stays_under_approved_ceiling_and_fails_closed():
     assert result.returncode == 0, result.stderr
     estimate = json.loads(result.stdout)
     assert estimate["region"] == "ap-northeast-2"
-    assert estimate["base_estimate_usd"] == 4.0966
-    assert estimate["planning_total_usd"] == 5.0966
+    assert estimate["base_estimate_usd"] == 4.1554
+    assert estimate["planning_total_usd"] == 5.1554
     assert estimate["within_budget"] is True
 
     over_budget = subprocess.run(
-        ["python3", str(script), "--hours", "3", "--requests", "102000", "--budget", "4.5", "--reserve", "1.00"],
+        ["python3", str(script), "--hours", "3", "--requests", "200000", "--budget", "4.5", "--reserve", "1.00"],
         check=False,
         capture_output=True,
         text=True,
@@ -915,6 +915,10 @@ def test_plan_validator_rejects_cost_shape_drift_before_apply(tmp_path):
         "eks_node_max_size": 2,
     }
     plan = {
+        "format_version": "1.2",
+        "errored": False,
+        "applyable": True,
+        "complete": True,
         "variables": {key: {"value": value} for key, value in variables.items()},
         "planned_values": {"root_module": {"resources": resources}},
         "resource_changes": [{"address": item["address"], "change": {"actions": ["create"]}} for item in resources],
@@ -936,6 +940,19 @@ def test_plan_validator_rejects_cost_shape_drift_before_apply(tmp_path):
     valid = subprocess.run(command, check=False, capture_output=True, text=True)
     assert valid.returncode == 0, valid.stderr
     assert "Validated 6 AWS plan resources" in valid.stdout
+
+    for key, invalid_value, expected_error in [
+        ("errored", True, "Terraform plan is errored"),
+        ("applyable", False, "Terraform plan is not applyable"),
+        ("complete", False, "Terraform plan is incomplete"),
+    ]:
+        original = plan[key]
+        plan[key] = invalid_value
+        plan_file.write_text(json.dumps(plan), encoding="utf-8")
+        blocked_plan = subprocess.run(command, check=False, capture_output=True, text=True)
+        assert blocked_plan.returncode == 2
+        assert expected_error in blocked_plan.stderr
+        plan[key] = original
 
     for index, key, bad in [(1, "disk_size", 50), (2, "engine_version", "8.0"),
                              (2, "engine_lifecycle_support", "open-source-rds-extended-support"),
