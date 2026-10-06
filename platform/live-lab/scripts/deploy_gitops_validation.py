@@ -66,7 +66,8 @@ def validate_workload(documents, image_reference):
     g.require(len(templates) == 1, "exactly one canary AnalysisTemplate is required")
     template = templates[0]
     g.require({arg["name"] for arg in template["spec"]["args"]} >=
-              {"service-name", "alb-name", "alb-id"}, "CloudWatch ALB arguments are required")
+              {"service-name", "alb-name", "alb-id", "canary-tg-name", "canary-tg-id"},
+              "CloudWatch ALB and canary target group arguments are required")
     metrics = {metric["name"]: metric for metric in template["spec"]["metrics"]}
     for name, threshold in (("alb-elb-error-rate", "< 0.01"),
                             ("alb-target-error-rate", "< 0.01"),
@@ -79,10 +80,16 @@ def validate_workload(documents, image_reference):
                   threshold in metric.get("successCondition", "") and
                   cloudwatch.get("metricDataQueries"),
                   f"CloudWatch {name} promotion gate is missing or weakened")
+    latency_queries = metrics["alb-target-response-p95"]["provider"]["cloudWatch"]["metricDataQueries"]
+    g.require(len(latency_queries) == 1 and
+              {entry["name"]: entry["value"] for entry in latency_queries[0]["metricStat"]["metric"]["dimensions"]} == {
+                  "LoadBalancer": "app/{{args.alb-name}}/{{args.alb-id}}",
+                  "TargetGroup": "targetgroup/{{args.canary-tg-name}}/{{args.canary-tg-id}}",
+              }, "external latency gate must measure the verified canary target group")
     rollout = next(obj for obj in documents if obj["kind"] == "Rollout")
     for index in (2, 5):
         args = {arg["name"]: arg for arg in rollout["spec"]["strategy"]["canary"]["steps"][index]["analysis"]["args"]}
-        for name in ("alb-name", "alb-id"):
+        for name in ("alb-name", "alb-id", "canary-tg-name", "canary-tg-id"):
             g.require(args.get(name, {}).get("valueFrom", {}).get("fieldRef", {}).get("fieldPath") ==
                       f"metadata.labels['live-lab.aws/{name}']", "CloudWatch Rollout ALB identity is missing")
     g.require("__" not in yaml.safe_dump_all(documents), "unresolved runtime placeholder in Git workload")
@@ -177,19 +184,16 @@ def verify_signed_delivery(bundle_dir, image_reference):
             "oci_image_sbom_subject": "verified"}
 
 
-def validate_canary_binding(rollout, image_reference, proof, session, approval, account, region, cluster):
-    """A changed image must not enter canary without the session ALB gate."""
+def validate_canary_binding(rollout, _image_reference, proof, session, approval, account, region, cluster):
+    """A canary sync must not proceed without its session ALB and target group."""
     if not rollout:
         return  # Initial rollout skips canary steps; the ALB does not exist yet.
-    current = rollout["spec"]["template"]["spec"]["containers"][0]["image"]
-    if current == image_reference:
-        return
     g.require(isinstance(proof, dict) and proof.get("status") == "verified" and
               proof.get("session") == session and proof.get("approval") == approval and
               proof.get("account") == account and proof.get("region") == region and
               proof.get("cluster") == cluster and
               proof.get("rollout_uid") == rollout["metadata"].get("uid"),
-              "changed image requires current session ALB binding evidence")
+              "canary sync requires current session ALB binding evidence")
     dimension = proof.get("alb_dimension", "")
     match = re.fullmatch(r"app/([A-Za-z0-9-]{1,32})/([a-f0-9]{16,32})", dimension)
     g.require(match is not None, "ALB binding evidence has an invalid CloudWatch dimension")
@@ -197,6 +201,12 @@ def validate_canary_binding(rollout, image_reference, proof, session, approval, 
     g.require(labels.get("live-lab.aws/alb-name") == match.group(1) and
               labels.get("live-lab.aws/alb-id") == match.group(2),
               "Rollout ALB labels do not match verified binding evidence")
+    target_dimension = proof.get("canary_target_group_dimension", "")
+    target_match = re.fullmatch(r"targetgroup/([A-Za-z0-9-]{1,32})/([a-f0-9]{16,32})", target_dimension)
+    g.require(target_match is not None and
+              labels.get("live-lab.aws/canary-tg-name") == target_match.group(1) and
+              labels.get("live-lab.aws/canary-tg-id") == target_match.group(2),
+              "Rollout canary target group labels do not match verified binding evidence")
 
 
 def binding_proof(path_value):

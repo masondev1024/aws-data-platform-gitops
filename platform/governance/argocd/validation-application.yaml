@@ -22,6 +22,8 @@ spec:
       jsonPointers:
         - /metadata/labels/live-lab.aws~1alb-name
         - /metadata/labels/live-lab.aws~1alb-id
+        - /metadata/labels/live-lab.aws~1canary-tg-name
+        - /metadata/labels/live-lab.aws~1canary-tg-id
   syncPolicy:
     syncOptions:
       - CreateNamespace=false

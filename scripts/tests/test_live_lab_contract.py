@@ -515,7 +515,15 @@ def test_live_lab_canary_analysis_gates_on_external_cloudwatch_metrics():
     assert "HTTPCode_Target_5XX_Count" in metric_names
     assert "TargetResponseTime" in metric_names
     assert all("LoadBalancer" in str(query) for query in queries if "metricStat" in query)
-    assert all("TargetGroup" not in str(query) for query in queries if "metricStat" in query)
+    error_queries = [query for name in ("alb-elb-error-rate", "alb-target-error-rate")
+                     for query in metrics[name]["provider"]["cloudWatch"]["metricDataQueries"]]
+    assert all("TargetGroup" not in str(query) for query in error_queries if "metricStat" in query)
+    latency_query = metrics["alb-target-response-p95"]["provider"]["cloudWatch"]["metricDataQueries"][0]
+    dimensions = latency_query["metricStat"]["metric"]["dimensions"]
+    assert {item["name"]: item["value"] for item in dimensions} == {
+        "LoadBalancer": "app/{{args.alb-name}}/{{args.alb-id}}",
+        "TargetGroup": "targetgroup/{{args.canary-tg-name}}/{{args.canary-tg-id}}",
+    }
     assert "live-lab.aws/alb-name" in read("platform/live-lab/scripts/deploy_live_lab.sh")
 
 

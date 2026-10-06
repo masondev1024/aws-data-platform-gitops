@@ -7,6 +7,14 @@
   value:
     name: alb-id
 - op: add
+  path: /spec/args/-
+  value:
+    name: canary-tg-name
+- op: add
+  path: /spec/args/-
+  value:
+    name: canary-tg-id
+- op: add
   path: /spec/metrics/-
   value:
     name: alb-elb-error-rate
@@ -107,6 +115,8 @@
                 dimensions:
                   - name: LoadBalancer
                     value: "app/{{args.alb-name}}/{{args.alb-id}}"
+                  - name: TargetGroup
+                    value: "targetgroup/{{args.canary-tg-name}}/{{args.canary-tg-id}}"
               period: 60
               stat: p95
               unit: Seconds

@@ -63,7 +63,13 @@ def test_gitops_canary_requires_external_alb_metrics(workload):
     rollout = next(item for item in workload if item["kind"] == "Rollout")
     metrics = {item["name"]: item for item in template["spec"]["metrics"]}
     assert {"alb-elb-error-rate", "alb-target-error-rate", "alb-target-response-p95"} <= metrics.keys()
-    assert {item["name"] for item in template["spec"]["args"]} >= {"alb-name", "alb-id"}
+    assert {item["name"] for item in template["spec"]["args"]} >= {
+        "alb-name", "alb-id", "canary-tg-name", "canary-tg-id"}
+    latency = metrics["alb-target-response-p95"]["provider"]["cloudWatch"]["metricDataQueries"][0]
+    assert {item["name"]: item["value"] for item in latency["metricStat"]["metric"]["dimensions"]} == {
+        "LoadBalancer": "app/{{args.alb-name}}/{{args.alb-id}}",
+        "TargetGroup": "targetgroup/{{args.canary-tg-name}}/{{args.canary-tg-id}}",
+    }
     steps = rollout["spec"]["strategy"]["canary"]["steps"]
     for step in (steps[2], steps[5]):
         args = {item["name"]: item for item in step["analysis"]["args"]}
@@ -73,6 +79,10 @@ def test_gitops_canary_requires_external_alb_metrics(workload):
         assert args["alb-id"]["valueFrom"]["fieldRef"]["fieldPath"] == (
             "metadata.labels['live-lab.aws/alb-id']"
         )
+        for name in ("canary-tg-name", "canary-tg-id"):
+            assert args[name]["valueFrom"]["fieldRef"]["fieldPath"] == (
+                f"metadata.labels['live-lab.aws/{name}']"
+            )
 
 
 def test_gitops_sync_preserves_operator_bound_alb_identity():
@@ -87,6 +97,8 @@ def test_gitops_sync_preserves_operator_bound_alb_identity():
     assert ignored[0]["jsonPointers"] == [
         "/metadata/labels/live-lab.aws~1alb-name",
         "/metadata/labels/live-lab.aws~1alb-id",
+        "/metadata/labels/live-lab.aws~1canary-tg-name",
+        "/metadata/labels/live-lab.aws~1canary-tg-id",
     ]
 
 
@@ -96,17 +108,22 @@ def test_changed_image_requires_verified_alb_binding_before_sync():
     rollout = {"metadata": {"uid": "rollout-1", "labels": {
         "live-lab.aws/alb-name": "k8s-platform-example",
         "live-lab.aws/alb-id": "0123456789abcdef",
+        "live-lab.aws/canary-tg-name": "k8s-platform-canary",
+        "live-lab.aws/canary-tg-id": "fedcba9876543210",
     }}, "spec": {"template": {"spec": {"containers": [{"image": old}]}}}}
     scope = ("live-261006-01", "SS0-20261006-test", "123456789012", "ap-northeast-2", "kyobo-live-261006-01")
     proof = {"status": "verified", "session": scope[0], "approval": scope[1],
              "account": scope[2], "region": scope[3], "cluster": scope[4],
-             "rollout_uid": "rollout-1", "alb_dimension": "app/k8s-platform-example/0123456789abcdef"}
+             "rollout_uid": "rollout-1", "alb_dimension": "app/k8s-platform-example/0123456789abcdef",
+             "canary_target_group_dimension": "targetgroup/k8s-platform-canary/fedcba9876543210"}
     delivery.validate_canary_binding(rollout, new, proof, *scope)
     for invalid in (None, {**proof, "session": "other-session"},
-                    {**proof, "alb_dimension": "app/foreign/0123456789abcdef"}):
+                    {**proof, "alb_dimension": "app/foreign/0123456789abcdef"},
+                    {**proof, "canary_target_group_dimension": "targetgroup/foreign/fedcba9876543210"}):
         with pytest.raises(delivery.g.CheckFailed):
             delivery.validate_canary_binding(rollout, new, invalid, *scope)
-    delivery.validate_canary_binding(rollout, old, None, *scope)
+    with pytest.raises(delivery.g.CheckFailed):
+        delivery.validate_canary_binding(rollout, old, None, *scope)
 
 
 def test_bootstrap_rejects_gitops_manifest_without_cloudwatch_gate(workload):
@@ -117,6 +134,20 @@ def test_bootstrap_rejects_gitops_manifest_without_cloudwatch_gate(workload):
     template["spec"]["metrics"] = [metric for metric in template["spec"]["metrics"]
                                     if metric["name"] != "alb-target-response-p95"]
     with pytest.raises(delivery.g.CheckFailed, match="CloudWatch"):
+        delivery.validate_workload(altered, image)
+
+
+def test_bootstrap_rejects_global_only_alb_latency_gate(workload):
+    altered = copy.deepcopy(workload)
+    rollout = next(item for item in altered if item["kind"] == "Rollout")
+    image = rollout["spec"]["template"]["spec"]["containers"][0]["image"]
+    template = next(item for item in altered if item["kind"] == "AnalysisTemplate")
+    metric = next(item for item in template["spec"]["metrics"]
+                  if item["name"] == "alb-target-response-p95")
+    metric["provider"]["cloudWatch"]["metricDataQueries"][0]["metricStat"]["metric"]["dimensions"] = [
+        {"name": "LoadBalancer", "value": "app/{{args.alb-name}}/{{args.alb-id}}"}
+    ]
+    with pytest.raises(delivery.g.CheckFailed, match="canary target group"):
         delivery.validate_workload(altered, image)
 
 

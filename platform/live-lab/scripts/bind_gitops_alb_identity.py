@@ -91,6 +91,40 @@ def derive_labels(args, report: dict, ingress: dict, rollout: dict, alb: dict,
     return labels
 
 
+def canary_target_group_labels(args, bindings: list, target_group: dict, tags: dict,
+                               alb: dict) -> tuple[dict[str, str], str]:
+    matches = [item for item in bindings
+               if item.get("spec", {}).get("serviceRef", {}).get("name") == "data-pipeline-svc-canary"]
+    require(len(matches) == 1, "ambiguous_canary_target_group_binding")
+    binding = matches[0]
+    spec = binding["spec"]
+    require(binding.get("metadata", {}).get("namespace") == "platform-validation" and
+            spec.get("serviceRef", {}).get("port") == 80 and
+            spec.get("targetType") == "ip", "canary_target_group_binding_mismatch")
+    arn = spec.get("targetGroupARN", "")
+    match = re.fullmatch(
+        rf"arn:aws:elasticloadbalancing:{re.escape(args.region)}:{args.account}:"
+        r"targetgroup/([A-Za-z0-9-]{1,32})/([a-f0-9]{16,32})", arn,
+    )
+    require(match is not None, "canary_target_group_arn_mismatch")
+    name, identifier = match.groups()
+    require(target_group.get("TargetGroupArn") == arn and
+            target_group.get("TargetGroupName") == name and
+            target_group.get("Protocol") == "HTTP" and target_group.get("Port") == 8080 and
+            target_group.get("TargetType") == "ip" and
+            target_group.get("VpcId") == alb.get("VpcId") and
+            target_group.get("LoadBalancerArns") == [alb.get("LoadBalancerArn")],
+            "canary_target_group_not_attached_to_owned_alb")
+    require(all(tags.get(key) == value for key, value in {
+        "Project": "kyobo-platform-live-lab", "Session": args.session,
+        "Approval": args.approval, "elbv2.k8s.aws/cluster": args.cluster,
+        "ingress.k8s.aws/resource":
+            "platform-validation/data-pipeline-ingress-data-pipeline-svc-canary:80",
+    }.items()), "canary_target_group_ownership_mismatch")
+    return {"live-lab.aws/canary-tg-name": name,
+            "live-lab.aws/canary-tg-id": identifier}, f"targetgroup/{name}/{identifier}"
+
+
 def aws_json(region: str, *arguments: str) -> dict:
     return g.document(g.run(["aws", "--region", region, "--output", "json", *arguments]))
 
@@ -130,6 +164,30 @@ def main() -> int:
     association = aws_json(args.region, "wafv2", "get-web-acl-for-resource", "--resource-arn", alb_arn)
     labels = derive_labels(args, report, ingress, rollout, balancers["LoadBalancers"][0],
                            tags, (association.get("WebACL") or {}).get("ARN", ""))
+    bindings = g.document(g.run(kube + ["-n", "platform-validation", "get",
+                                      "targetgroupbindings.elbv2.k8s.aws", "-o", "json"]))["items"]
+    matching = [item for item in bindings
+                if item.get("spec", {}).get("serviceRef", {}).get("name") == "data-pipeline-svc-canary"]
+    require(len(matching) == 1, "ambiguous_canary_target_group_binding")
+    tg_arn = matching[0].get("spec", {}).get("targetGroupARN", "")
+    require(bool(re.fullmatch(
+        rf"arn:aws:elasticloadbalancing:{args.region}:{args.account}:targetgroup/"
+        r"[A-Za-z0-9-]{1,32}/[a-f0-9]{16,32}", tg_arn)),
+        "canary_target_group_arn_mismatch")
+    target_groups = aws_json(args.region, "elbv2", "describe-target-groups",
+                             "--target-group-arns", tg_arn)["TargetGroups"]
+    require(len(target_groups) == 1, "ambiguous_canary_target_group")
+    target_tag_response = aws_json(args.region, "elbv2", "describe-tags", "--resource-arns", tg_arn)
+    require(len(target_tag_response.get("TagDescriptions", [])) == 1,
+            "missing_canary_target_group_tags")
+    tag_items = target_tag_response["TagDescriptions"][0]["Tags"]
+    target_tags = {item["Key"]: item["Value"] for item in tag_items}
+    require(len(target_tags) == len(tag_items), "duplicate_canary_target_group_tags")
+    target_labels, target_dimension = canary_target_group_labels(
+        args, bindings, target_groups[0], target_tags, balancers["LoadBalancers"][0])
+    for key, value in target_labels.items():
+        require(labels.get(key) in (None, value), "conflicting_canary_target_group_identity")
+        labels[key] = value
     metadata = rollout["metadata"]
     patch = [
         {"op": "test", "path": "/metadata/resourceVersion", "value": metadata["resourceVersion"]},
@@ -145,11 +203,13 @@ def main() -> int:
         json.dump({"status": "verified", "account": args.account, "region": args.region,
                    "cluster": args.cluster, "session": args.session, "approval": args.approval,
                    "alb_arn": alb_arn, "alb_dimension": report["alb_cloudwatch_load_balancer_dimension"],
+                   "canary_target_group_dimension": target_dimension,
                    "rollout_uid": result["metadata"]["uid"],
                    "rollout_resource_version": result["metadata"]["resourceVersion"]}, handle, indent=2)
         handle.write("\n")
     print(json.dumps({"status": "verified", "session": args.session, "alb_dimension":
-                      report["alb_cloudwatch_load_balancer_dimension"]}))
+                      report["alb_cloudwatch_load_balancer_dimension"],
+                      "canary_target_group_dimension": target_dimension}))
     return 0
 
 

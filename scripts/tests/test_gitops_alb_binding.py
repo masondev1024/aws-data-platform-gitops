@@ -62,6 +62,32 @@ def test_ingress_status_with_controller_ports_is_accepted(owned):
     assert labels["live-lab.aws/alb-id"] == "0123456789abcdef"
 
 
+def test_canary_target_group_must_belong_to_the_session_alb(owned):
+    args, _, _, _, alb, _, _ = owned
+    arn = ("arn:aws:elasticloadbalancing:ap-northeast-2:123456789012:"
+           "targetgroup/k8s-platform-canary/fedcba9876543210")
+    bindings = [{"metadata": {"namespace": "platform-validation"}, "spec": {
+        "serviceRef": {"name": "data-pipeline-svc-canary", "port": 80},
+        "targetType": "ip", "targetGroupARN": arn,
+    }}]
+    target_group = {"TargetGroupArn": arn, "TargetGroupName": "k8s-platform-canary",
+                    "Protocol": "HTTP", "Port": 8080, "TargetType": "ip",
+                    "VpcId": "vpc-1234", "LoadBalancerArns": [alb["LoadBalancerArn"]]}
+    alb["VpcId"] = "vpc-1234"
+    tags = {"Project": "kyobo-platform-live-lab", "Session": args.session,
+            "Approval": args.approval, "elbv2.k8s.aws/cluster": args.cluster,
+            "ingress.k8s.aws/resource":
+                "platform-validation/data-pipeline-ingress-data-pipeline-svc-canary:80"}
+    labels, dimension = binding.canary_target_group_labels(
+        args, bindings, target_group, tags, alb)
+    assert labels == {"live-lab.aws/canary-tg-name": "k8s-platform-canary",
+                      "live-lab.aws/canary-tg-id": "fedcba9876543210"}
+    assert dimension == "targetgroup/k8s-platform-canary/fedcba9876543210"
+    target_group["LoadBalancerArns"] = []
+    with pytest.raises(binding.BindingError, match="not_attached"):
+        binding.canary_target_group_labels(args, bindings, target_group, tags, alb)
+
+
 @pytest.mark.parametrize("addresses", [
     [{"hostname": "example.ap-northeast-2.elb.amazonaws.com"}, {"hostname": "other.example.test"}],
     [{"hostname": "example.ap-northeast-2.elb.amazonaws.com", "ip": "192.0.2.1"}],
