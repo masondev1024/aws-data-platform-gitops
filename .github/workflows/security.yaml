@@ -64,6 +64,7 @@ jobs:
           bandit --quiet --severity-level high scripts/collect_agentic_incident.py scripts/triage_incident.py scripts/platform_doctor.py
           bandit --quiet --severity-level high scripts/verify_release_bundle.py scripts/verify_gitops_deployment.py
           bandit --quiet --severity-level high platform/live-lab/scripts/deploy_gitops_validation.py
+          bandit --quiet --severity-level high platform/live-lab/scripts/bind_gitops_alb_identity.py
 
   infrastructure-and-secret-scan:
     name: IaC and secret policy checks

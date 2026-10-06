@@ -3,6 +3,8 @@ kind: Kustomization
 namespace: platform-validation
 resources:
   - ../../../../k8s/base
+components:
+  - ../../../../k8s/components/alb-canary-gate
 patches:
   - path: patches/patch-migration-live-lab.yaml
   - path: patches/patch-cronjob-live-lab.yaml
@@ -13,12 +15,6 @@ patches:
       kind: AnalysisTemplate
       name: data-pipeline-canary
     path: patches/patch-analysis-template-prometheus-url.yaml
-  - target:
-      group: argoproj.io
-      version: v1alpha1
-      kind: AnalysisTemplate
-      name: data-pipeline-canary
-    path: patches/patch-analysis-template-cloudwatch.yaml
   - target:
       group: argoproj.io
       version: v1alpha1

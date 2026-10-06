@@ -61,6 +61,30 @@ def validate_workload(documents, image_reference):
         images.extend(c["image"] for c in pod.get("containers", []) + pod.get("initContainers", []))
     g.require(len(images) == 3 and all(image == image_reference for image in images),
               "Git must pin the reviewed image for application, migration and draw job")
+    templates = [obj for obj in documents if obj["kind"] == "AnalysisTemplate" and
+                 obj["metadata"]["name"] == "data-pipeline-canary"]
+    g.require(len(templates) == 1, "exactly one canary AnalysisTemplate is required")
+    template = templates[0]
+    g.require({arg["name"] for arg in template["spec"]["args"]} >=
+              {"service-name", "alb-name", "alb-id"}, "CloudWatch ALB arguments are required")
+    metrics = {metric["name"]: metric for metric in template["spec"]["metrics"]}
+    for name, threshold in (("alb-elb-error-rate", "< 0.01"),
+                            ("alb-target-error-rate", "< 0.01"),
+                            ("alb-target-response-p95", "< 0.5")):
+        metric = metrics.get(name, {})
+        cloudwatch = metric.get("provider", {}).get("cloudWatch", {})
+        g.require(metric.get("count") == 3 and metric.get("failureLimit") == 0 and
+                  metric.get("inconclusiveLimit") == 0 and
+                  "len(result[0].Values) >= 3" in metric.get("successCondition", "") and
+                  threshold in metric.get("successCondition", "") and
+                  cloudwatch.get("metricDataQueries"),
+                  f"CloudWatch {name} promotion gate is missing or weakened")
+    rollout = next(obj for obj in documents if obj["kind"] == "Rollout")
+    for index in (2, 5):
+        args = {arg["name"]: arg for arg in rollout["spec"]["strategy"]["canary"]["steps"][index]["analysis"]["args"]}
+        for name in ("alb-name", "alb-id"):
+            g.require(args.get(name, {}).get("valueFrom", {}).get("fieldRef", {}).get("fieldPath") ==
+                      f"metadata.labels['live-lab.aws/{name}']", "CloudWatch Rollout ALB identity is missing")
     g.require("__" not in yaml.safe_dump_all(documents), "unresolved runtime placeholder in Git workload")
 
 
@@ -153,12 +177,47 @@ def verify_signed_delivery(bundle_dir, image_reference):
             "oci_image_sbom_subject": "verified"}
 
 
+def validate_canary_binding(rollout, image_reference, proof, session, approval, account, region, cluster):
+    """A changed image must not enter canary without the session ALB gate."""
+    if not rollout:
+        return  # Initial rollout skips canary steps; the ALB does not exist yet.
+    current = rollout["spec"]["template"]["spec"]["containers"][0]["image"]
+    if current == image_reference:
+        return
+    g.require(isinstance(proof, dict) and proof.get("status") == "verified" and
+              proof.get("session") == session and proof.get("approval") == approval and
+              proof.get("account") == account and proof.get("region") == region and
+              proof.get("cluster") == cluster and
+              proof.get("rollout_uid") == rollout["metadata"].get("uid"),
+              "changed image requires current session ALB binding evidence")
+    dimension = proof.get("alb_dimension", "")
+    match = re.fullmatch(r"app/([A-Za-z0-9-]{1,32})/([a-f0-9]{16,32})", dimension)
+    g.require(match is not None, "ALB binding evidence has an invalid CloudWatch dimension")
+    labels = rollout["metadata"].get("labels", {})
+    g.require(labels.get("live-lab.aws/alb-name") == match.group(1) and
+              labels.get("live-lab.aws/alb-id") == match.group(2),
+              "Rollout ALB labels do not match verified binding evidence")
+
+
+def binding_proof(path_value):
+    if not path_value:
+        return None
+    path = Path(path_value)
+    evidence_dir = ROOT / "platform/live-lab/evidence"
+    g.require(path.resolve().parent == evidence_dir.resolve() and path.is_file() and
+              not path.is_symlink() and path.stat().st_mode & 0o777 == 0o600,
+              "ALB binding evidence must be a private session file")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def main():
     parser = g.parser()
     parser.add_argument("--gitops-revision", required=True)
     parser.add_argument("--image-reference", required=True)
     parser.add_argument("--bundle-dir", type=Path, required=True,
                         help="Downloaded CI release artifact; signatures are reverified before mutation")
+    parser.add_argument("--alb-binding-evidence",
+                        help="Verified operator ALB binding; required when the Rollout image changes")
     a = parser.parse_args()
     g.validate_args(a)
     g.require(a.region == "ap-northeast-2", "only the approved Seoul region is supported")
@@ -180,6 +239,17 @@ def main():
     report["supply_chain"] = verify_signed_delivery(a.bundle_dir, a.image_reference)
     kube = ["kubectl", "--context", a.context, "--request-timeout=30s"]
     installer.validate_cluster(a, kube)
+    namespace = g.run(kube + ["get", "namespace", g.NAMESPACE, "--ignore-not-found", "-o", "name"])
+    existing_rollout = None
+    if namespace.stdout.strip():
+        current_name = g.run(kube + ["-n", g.NAMESPACE, "get", "rollout", "data-pipeline-rollout",
+                                     "--ignore-not-found", "-o", "name"])
+        if current_name.stdout.strip():
+            existing_rollout = g.document(g.run(kube + ["-n", g.NAMESPACE, "get", "rollout",
+                                                     "data-pipeline-rollout", "-o", "json"]))
+    validate_canary_binding(existing_rollout, a.image_reference,
+                            binding_proof(a.alb_binding_evidence), a.session, a.approval,
+                            a.account, a.region, a.cluster)
     outputs = g.document(g.run(["terraform", f"-chdir={ROOT / 'platform/live-lab/terraform'}", "output", "-json"]))
     certificate = (ROOT / "platform/live-lab/evidence/acm-certificate-arn.txt").read_text().strip()
     tags = g.document(g.run(["aws", "--region", a.region, "acm", "list-tags-for-certificate",
