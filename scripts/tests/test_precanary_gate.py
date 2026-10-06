@@ -81,6 +81,16 @@ def test_precanary_rejects_stale_baseline_and_wrong_session(tmp_path):
             tmp_path, "live-261006-04", run_id, datetime(2026, 10, 6, 7, 14, tzinfo=timezone.utc))
 
 
+def test_precanary_rejects_shortened_baseline_even_when_request_thresholds_pass(tmp_path):
+    session, run_id, summary, _ = baseline_files(tmp_path)
+    summary["started_at"] = "2026-10-06T07:12:00Z"
+    (tmp_path / f"k6-{run_id}.json").write_text(json.dumps(summary))
+
+    with pytest.raises(gate.GateError, match="baseline_duration_short"):
+        gate.verify_baseline_evidence(
+            tmp_path, session, run_id, datetime(2026, 10, 6, 7, 14, tzinfo=timezone.utc))
+
+
 def stable_snapshot():
     arn = ("arn:aws:elasticloadbalancing:ap-northeast-2:854745312525:"
            "targetgroup/k8s-platform-stable/1234567890abcdef")

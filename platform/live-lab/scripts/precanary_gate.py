@@ -67,6 +67,7 @@ def verify_baseline_evidence(evidence_dir: Path, session: str, run_id: str,
         raise GateError("baseline_time_invalid") from exc
     require(all(item.tzinfo is not None for item in (started, reserved, completed)) and
             reserved <= started < completed <= now, "baseline_time_invalid")
+    require((completed - started).total_seconds() >= 13 * 60, "baseline_duration_short")
     require(0 <= (now - completed).total_seconds() <= 900, "baseline_stale")
     metrics = summary.get("metrics", {})
     require(isinstance(metrics, dict), "baseline_threshold_failed")
