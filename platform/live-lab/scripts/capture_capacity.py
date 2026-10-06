@@ -77,6 +77,8 @@ def queries(service='stable'):
     q = {
         'http_p95_seconds': quantile('raffle_http_request_duration_seconds', 0.95, http),
         'http_p99_seconds': quantile('raffle_http_request_duration_seconds', 0.99, http),
+        'http_p95_by_route_seconds': quantile(
+            'raffle_http_request_duration_seconds', 0.95, http, group=',route'),
         'http_requests_per_second': f'sum({rate("raffle_http_requests_total", http)})',
         'http_5xx_per_second': f'sum({rate("raffle_http_requests_total", http + ",status=~\"5..\"")})',
         'db_connect_p95_seconds': quantile('raffle_db_connect_duration_seconds', 0.95, group=',role'),
@@ -93,6 +95,10 @@ def queries(service='stable'):
     pod = 'namespace="platform-validation",pod=~"data-pipeline-rollout-.*"'
     q.update({
         'pod_cpu_cores': f'sum by (pod) (rate(container_cpu_usage_seconds_total{{{pod},container!="",container!="POD"}}[2m]))',
+        'pod_cpu_throttle_ratio': (
+            f'sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{{{pod},container!="",container!="POD"}}[2m]))'
+            f' / sum by (pod) (rate(container_cpu_cfs_periods_total{{{pod},container!="",container!="POD"}}[2m]))'
+        ),
         'pod_memory_bytes': f'sum by (pod) (container_memory_working_set_bytes{{{pod},container!="",container!="POD"}})',
         'pod_restarts': f'sum by (pod) (kube_pod_container_status_restarts_total{{{pod}}})',
         'pod_ready': f'min by (pod) (kube_pod_status_ready{{{pod},condition="true"}})',

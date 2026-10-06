@@ -117,10 +117,15 @@ def test_invalid_prometheus_response_rejected(response):
 
 def test_fixed_queries_have_histogram_aggregation_and_exact_scope():
     queries = capacity.queries()
-    assert len(queries) == 20
+    assert len(queries) == 22
     assert all('namespace="platform-validation"' in q for q in queries.values())
     assert 'sum by (le)' in queries['http_p99_seconds']
     assert 'sum by (le,role)' in queries['db_connect_p95_seconds']
+    assert 'sum by (le,route)' in queries['http_p95_by_route_seconds']
+    assert 'route!~"/(metrics|healthz|readyz)"' in queries['http_p95_by_route_seconds']
+    assert 'container_cpu_cfs_throttled_periods_total' in queries['pod_cpu_throttle_ratio']
+    assert 'container_cpu_cfs_periods_total' in queries['pod_cpu_throttle_ratio']
+    assert 'sum by (pod)' in queries['pod_cpu_throttle_ratio']
     assert 'or vector(0)' not in ' '.join(queries.values())
     assert 'min(' in queries['outbox_parity_min']
 
@@ -130,6 +135,7 @@ def test_canary_queries_use_only_the_canary_service():
     assert len(queries) == len(capacity.queries())
     for metric in ('http_p95_seconds', 'db_connect_p95_seconds', 'outbox_parity_min', 'scrape_up_min'):
         assert 'service="data-pipeline-svc-canary"' in queries[metric]
+    assert 'service="data-pipeline-svc-canary"' in queries['http_p95_by_route_seconds']
     assert 'service="data-pipeline-svc-stable"' not in ' '.join(queries.values())
     with pytest.raises(ValueError, match='service'):
         capacity.queries('unscoped')
