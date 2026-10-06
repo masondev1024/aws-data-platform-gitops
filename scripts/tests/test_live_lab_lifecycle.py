@@ -23,6 +23,8 @@ SECRET_ARN = (
     f"arn:aws:secretsmanager:ap-northeast-2:{ACCOUNT_ID}:secret:"
     "kyobo-live-lab/live-260923-test/mysql-master-password-Ab12Cd"
 )
+SUBNET_ID = "subnet-04633ca8b9b1e0aef"
+SUBNET_ARN = f"arn:aws:ec2:ap-northeast-2:{ACCOUNT_ID}:subnet/{SUBNET_ID}"
 
 
 def source_file(tmp_path: Path, arn: str = ARN) -> Path:
@@ -112,6 +114,58 @@ def test_reconcile_inventory_separates_deleted_secret_from_historical_tag_index(
         "tags": source_file_tags(),
         "verification": "secretsmanager_describe_secret_not_found",
     }]
+
+
+def test_reconcile_inventory_separates_deleted_subnet_from_historical_tag_index(tmp_path):
+    source = source_file(tmp_path, arn=SUBNET_ARN)
+    calls = []
+
+    def not_found_subnet(command):
+        return subprocess.CompletedProcess(command, 254, "", "An error occurred (InvalidSubnetID.NotFound)")
+
+    result = live_lab_lifecycle.reconcile_inventory(
+        str(source), str(tmp_path / "inventory.json"), EXPECTED,
+        profile="develope-test", region="ap-northeast-2", account_id=ACCOUNT_ID,
+        aws_runner=runner(not_found_subnet, calls=calls),
+    )
+    report = json.loads((tmp_path / "inventory.json").read_text(encoding="utf-8"))
+    assert result == {"live": 0, "stale": 1, "unresolved": 0}
+    assert calls[1][5:8] == ["ec2", "describe-subnets", "--subnet-ids"]
+    assert calls[1][8] == SUBNET_ID
+    assert report["stale_tag_index_entries"][0]["verification"] == "ec2_describe_subnets_not_found"
+
+
+@pytest.mark.parametrize(("response", "expected"), [
+    ({"Subnets": [{"SubnetId": SUBNET_ID}]}, {"live": 1, "stale": 0, "unresolved": 0}),
+    ({"Subnets": []}, {"live": 0, "stale": 0, "unresolved": 1}),
+    ({"Subnets": [{"SubnetId": "subnet-foreign"}]}, {"live": 0, "stale": 0, "unresolved": 1}),
+])
+def test_reconcile_inventory_subnet_success_requires_exact_identity(tmp_path, response, expected):
+    source = source_file(tmp_path, arn=SUBNET_ARN)
+
+    def describe(command):
+        return subprocess.CompletedProcess(command, 0, json.dumps(response), "")
+
+    result = live_lab_lifecycle.reconcile_inventory(
+        str(source), str(tmp_path / "inventory.json"), EXPECTED,
+        profile="develope-test", region="ap-northeast-2", account_id=ACCOUNT_ID,
+        aws_runner=runner(describe),
+    )
+    assert result == expected
+
+
+def test_reconcile_inventory_subnet_access_denied_stays_unresolved(tmp_path):
+    source = source_file(tmp_path, arn=SUBNET_ARN)
+
+    def access_denied(command):
+        return subprocess.CompletedProcess(command, 254, "", "AccessDenied")
+
+    result = live_lab_lifecycle.reconcile_inventory(
+        str(source), str(tmp_path / "inventory.json"), EXPECTED,
+        profile="develope-test", region="ap-northeast-2", account_id=ACCOUNT_ID,
+        aws_runner=runner(access_denied),
+    )
+    assert result == {"live": 0, "stale": 0, "unresolved": 1}
 
 
 def test_reconcile_inventory_keeps_live_secret_as_residual(tmp_path):

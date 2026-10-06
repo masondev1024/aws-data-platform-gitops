@@ -119,7 +119,7 @@ def _write_reconciliation_report(
         "stale_tag_index_entries": stale_tag_index_entries,
         "unresolved_resources": unresolved_resources,
         "limitations": [
-            "Known EC2 security-group-rule candidates were checked with DescribeSecurityGroupRules; unknown resource types fail closed.",
+            "Known EC2 security-group-rule and subnet candidates were checked with service Describe APIs; unknown resource types fail closed.",
             "Resource Groups Tagging API may retain previously tagged ARNs after resource deletion.",
             "Does not prove that untagged resources or delayed billing are absent.",
             "Not a final invoice.",
@@ -199,6 +199,43 @@ def _verify_secret(
     if not isinstance(result, dict) or result.get("ARN") != arn:
         raise ValueError("Secrets Manager DescribeSecret did not prove the exact secret ARN")
     return True, "secretsmanager_describe_secret_found"
+
+
+def _verify_subnet(
+    arn: str, *, profile: str, region: str, aws_runner=subprocess.run
+) -> tuple[bool, str]:
+    """Distinguish a live subnet from an eventual-consistency tag-index entry."""
+    parts = arn.split(":", 5)
+    if len(parts) != 6 or parts[0] != "arn" or parts[2] != "ec2" or parts[3] != region:
+        raise ValueError("subnet ARN does not match the selected AWS region")
+    resource = parts[5]
+    if not resource.startswith("subnet/"):
+        raise ValueError("invalid subnet ARN")
+    subnet_id = resource.removeprefix("subnet/")
+    if not subnet_id.startswith("subnet-") or len(subnet_id) <= len("subnet-") or any(
+        char not in "0123456789abcdef" for char in subnet_id[len("subnet-"):]
+    ):
+        raise ValueError("invalid subnet identifier")
+    command = [
+        "aws", "--profile", profile, "--region", region,
+        "ec2", "describe-subnets", "--subnet-ids", subnet_id, "--output", "json",
+    ]
+    response = aws_runner(command, capture_output=True, text=True, check=False)
+    if response.returncode != 0:
+        error_text = f"{response.stderr}\n{response.stdout}"
+        if "(InvalidSubnetID.NotFound)" in error_text:
+            return False, "ec2_describe_subnets_not_found"
+        raise RuntimeError(f"could not verify EC2 subnet {subnet_id}: {response.stderr.strip()}")
+    try:
+        result = json.loads(response.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError("EC2 DescribeSubnets returned invalid JSON") from exc
+    subnets = result.get("Subnets") if isinstance(result, dict) else None
+    if (not isinstance(subnets, list) or len(subnets) != 1 or
+            not isinstance(subnets[0], dict) or subnets[0].get("SubnetId") != subnet_id or
+            result.get("NextToken")):
+        raise ValueError("EC2 DescribeSubnets did not prove the exact subnet state")
+    return True, "ec2_describe_subnets_found"
 
 
 def reconcile_inventory(
@@ -315,6 +352,17 @@ def reconcile_inventory(
         if service == "ec2" and resource.startswith("security-group-rule/"):
             try:
                 is_live, verification = _verify_security_group_rule(
+                    arn, profile=profile, region=region, aws_runner=aws_runner
+                )
+            except ValueError:
+                unresolved_resources.append({"arn": arn, "verification": "ec2_response_ambiguous"})
+                continue
+            except (OSError, RuntimeError, TypeError):
+                unresolved_resources.append({"arn": arn, "verification": "service_verification_failed"})
+                continue
+        elif service == "ec2" and resource.startswith("subnet/"):
+            try:
+                is_live, verification = _verify_subnet(
                     arn, profile=profile, region=region, aws_runner=aws_runner
                 )
             except ValueError:
