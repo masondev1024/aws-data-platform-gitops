@@ -22,7 +22,7 @@
 - op: add
   path: /spec/template/spec/containers/0/resources/limits
   value:
-    cpu: "500m"
+    cpu: "1"
     memory: "768Mi"
 - op: add
   path: /spec/template/spec/containers/0/readinessProbe/httpGet/httpHeaders
