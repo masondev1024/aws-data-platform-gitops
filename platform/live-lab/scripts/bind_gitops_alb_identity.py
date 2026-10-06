@@ -71,10 +71,13 @@ def derive_labels(args, report: dict, ingress: dict, rollout: dict, alb: dict,
                   f"{args.cluster}-web-acl/")
     require(report.get("web_acl_arn", "").startswith(acl_prefix) and
             report.get("web_acl_arn") == web_acl_arn, "live_waf_association_mismatch")
+    ingress_addresses = ingress.get("status", {}).get("loadBalancer", {}).get("ingress", [])
     require(ingress.get("metadata", {}).get("name") == "data-pipeline-ingress" and
             ingress.get("metadata", {}).get("namespace") == "platform-validation" and
-            ingress.get("status", {}).get("loadBalancer", {}).get("ingress") ==
-            [{"hostname": report.get("alb_dns")}], "ingress_alb_mismatch")
+            isinstance(ingress_addresses, list) and len(ingress_addresses) == 1 and
+            isinstance(ingress_addresses[0], dict) and
+            ingress_addresses[0].get("hostname") == report.get("alb_dns") and
+            not ingress_addresses[0].get("ip"), "ingress_alb_mismatch")
     metadata = rollout.get("metadata", {})
     require(metadata.get("name") == "data-pipeline-rollout" and
             metadata.get("namespace") == "platform-validation" and

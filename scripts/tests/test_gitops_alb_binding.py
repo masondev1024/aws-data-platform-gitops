@@ -53,6 +53,26 @@ def test_verified_session_binding_preserves_existing_labels(owned):
     assert labels["live-lab.aws/alb-id"] == "0123456789abcdef"
 
 
+def test_ingress_status_with_controller_ports_is_accepted(owned):
+    args, report, ingress, rollout, alb, tags, acl = owned
+    ingress["status"]["loadBalancer"]["ingress"][0]["ports"] = [
+        {"port": 80, "protocol": ""}, {"port": 443, "protocol": ""},
+    ]
+    labels = binding.derive_labels(args, report, ingress, rollout, alb, tags, acl)
+    assert labels["live-lab.aws/alb-id"] == "0123456789abcdef"
+
+
+@pytest.mark.parametrize("addresses", [
+    [{"hostname": "example.ap-northeast-2.elb.amazonaws.com"}, {"hostname": "other.example.test"}],
+    [{"hostname": "example.ap-northeast-2.elb.amazonaws.com", "ip": "192.0.2.1"}],
+])
+def test_ambiguous_ingress_addresses_are_rejected(owned, addresses):
+    args, report, ingress, rollout, alb, tags, acl = owned
+    ingress["status"]["loadBalancer"]["ingress"] = addresses
+    with pytest.raises(binding.BindingError, match="ingress_alb_mismatch"):
+        binding.derive_labels(args, report, ingress, rollout, alb, tags, acl)
+
+
 @pytest.mark.parametrize("field,value", [
     ("session", "other-session"),
     ("alb_cloudwatch_load_balancer_id", "ffffffffffffffff"),
