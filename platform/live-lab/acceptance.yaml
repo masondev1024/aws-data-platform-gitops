@@ -29,7 +29,7 @@ positive_acceptance:
   - name: async_replica_promotion
     evidence: "Promotion requires stopped writers/CronJob, exact replicated entry/outbox marker, RDS read-replication Normal=true, and two recent non-negative acceptable replica-lag measurements; old writer is fenced before writes resume."
   - name: pod_and_release_recovery
-    evidence: "Pod termination uses a distroless-compatible 10-second preStop wait within a 60-second grace period; the live-lab Ingress configures 30-second ALB target deregistration. Pod deletion and unhealthy canary drills must still pass a fresh AWS run before this change is claimed as live-verified."
+    evidence: "Pod termination uses a distroless-compatible 30-second preStop wait within a 60-second grace period, aligned with the live-lab's 30-second ALB target drain. A live deletion drill initially measured 4/150 readiness failures before the GitOps validation overlay included the hook; re-run after this correction before claiming recovery as verified."
   - name: agentic_triage_boundary
     evidence: "Agent diagnosis cites collected evidence IDs, labels unavailable observations unknown, and cannot execute shell, SQL, Kubernetes writes, deployments or rollback."
   - name: scoped_teardown

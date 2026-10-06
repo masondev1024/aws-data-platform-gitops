@@ -467,7 +467,7 @@ def test_live_lab_rollout_shutdown_and_alb_drain_are_bounded_and_compatible_with
 
     assert pod_spec["terminationGracePeriodSeconds"] == 60
     assert container["lifecycle"]["preStop"]["exec"]["command"] == [
-        "/usr/bin/python3", "-c", "import time; time.sleep(10)"
+        "/usr/bin/python3", "-c", "import time; time.sleep(30)"
     ]
     assert ingress["metadata"]["annotations"]["alb.ingress.kubernetes.io/target-group-attributes"] == (
         "deregistration_delay.timeout_seconds=30"
