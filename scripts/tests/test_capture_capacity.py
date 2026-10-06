@@ -21,7 +21,7 @@ def args():
     return SimpleNamespace(profile='develope-test', account='123456789012', region='ap-northeast-2', session='session-123',
         approval='approved-123', cluster='kyobo-session-123',
         context='arn:aws:eks:ap-northeast-2:123456789012:cluster/kyobo-session-123',
-        start=120, end=240, prometheus_port=19091)
+        start=120, end=240, prometheus_port=19091, service='stable')
 
 
 def preflight_documents():
@@ -123,6 +123,16 @@ def test_fixed_queries_have_histogram_aggregation_and_exact_scope():
     assert 'sum by (le,role)' in queries['db_connect_p95_seconds']
     assert 'or vector(0)' not in ' '.join(queries.values())
     assert 'min(' in queries['outbox_parity_min']
+
+
+def test_canary_queries_use_only_the_canary_service():
+    queries = capacity.queries('canary')
+    assert len(queries) == len(capacity.queries())
+    for metric in ('http_p95_seconds', 'db_connect_p95_seconds', 'outbox_parity_min', 'scrape_up_min'):
+        assert 'service="data-pipeline-svc-canary"' in queries[metric]
+    assert 'service="data-pipeline-svc-stable"' not in ' '.join(queries.values())
+    with pytest.raises(ValueError, match='service'):
+        capacity.queries('unscoped')
 
 
 def test_command_budget_cannot_grow_unbounded():
@@ -273,6 +283,15 @@ def test_explicit_profile_and_collector_port(tmp_path):
     parsed = capacity.arguments(cli_args(tmp_path) + ['--profile', 'develope-test'])
     assert parsed.profile == 'develope-test'
     assert parsed.prometheus_port == 19091
+    assert parsed.service == 'stable'
+
+
+def test_collector_accepts_only_stable_or_canary_service(tmp_path):
+    base = cli_args(tmp_path) + ['--profile', 'develope-test']
+    assert capacity.arguments(base + ['--service', 'canary']).service == 'canary'
+    with pytest.raises(SystemExit) as error:
+        capacity.arguments(base + ['--service', 'unscoped'])
+    assert error.value.code == 2
 
 
 @pytest.mark.parametrize('plugin', [
