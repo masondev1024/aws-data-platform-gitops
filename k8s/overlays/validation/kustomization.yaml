@@ -8,8 +8,8 @@ components:
 images:
   - name: data-pipeline-app
     newName: 854745312525.dkr.ecr.eu-west-1.amazonaws.com/data-pipeline-app
-    newTag: e6877cc5e2c5d7cf1acb67f4e880ec140a7a3e3e
-    digest: sha256:86ef4e7f5337dc3ba74c67a13e6b37c727ba569b7e2961598f0a106ccb5ecedf
+    newTag: a8ef5772fab2a59d4d319a138592c4c7091a1c40
+    digest: sha256:e60373c5aa9aceb6f55563bf549d2a646cbc884270b7742285a0ac04ef19fd25
 patches:
   - path: patch-hpa.yaml
   - target:
