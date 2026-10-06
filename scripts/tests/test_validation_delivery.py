@@ -132,6 +132,23 @@ def test_gitops_sync_preserves_operator_bound_alb_identity():
     ]
 
 
+def test_live_quota_covers_stable_and_canary_during_promotion(workload):
+    quota = next(
+        doc for doc in yaml.safe_load_all(
+            (ROOT / "platform/governance/bootstrap/resource-controls.yaml").read_text()
+        ) if doc and doc["kind"] == "ResourceQuota"
+    )
+    hpa = next(doc for doc in workload if doc["kind"] == "HorizontalPodAutoscaler")
+    rollout = next(doc for doc in workload if doc["kind"] == "Rollout")
+    app = next(container for container in rollout["spec"]["template"]["spec"]["containers"]
+               if container["name"] == "app-container")
+
+    # The stable ReplicaSet stays at the HPA floor while promotion fills the
+    # canary ReplicaSet to that same size before draining old Pods.
+    required_cpu = 2 * hpa["spec"]["minReplicas"] * int(app["resources"]["limits"]["cpu"])
+    assert int(quota["spec"]["hard"]["limits.cpu"]) >= required_cpu
+
+
 def test_changed_image_requires_verified_alb_binding_before_sync():
     old = "registry.example.test/app:old@sha256:" + "a" * 64
     new = "registry.example.test/app:new@sha256:" + "b" * 64
