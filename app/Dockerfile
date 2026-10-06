@@ -29,4 +29,4 @@ EXPOSE 8080
 
 # Keep one Prometheus registry per pod. Scale horizontally with Rollout/HPA
 # rather than using Gunicorn workers that would expose split counter state.
-CMD ["-m", "gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "4", "--worker-tmp-dir", "/dev/shm", "--timeout", "30", "--access-logfile", "-", "--error-logfile", "-", "app:app"]
+CMD ["-m", "gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "4", "--worker-tmp-dir", "/dev/shm", "--timeout", "30", "--keep-alive", "75", "--access-logfile", "-", "--error-logfile", "-", "app:app"]

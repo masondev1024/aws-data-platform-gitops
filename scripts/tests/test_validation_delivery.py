@@ -68,6 +68,25 @@ def test_validation_rollout_waits_for_alb_target_deregistration(workload):
     ]
 
 
+def test_live_lab_backend_keepalive_exceeds_alb_idle_timeout():
+    dockerfile = (ROOT / "app/Dockerfile").read_text()
+    command_line = next(line[4:] for line in dockerfile.splitlines() if line.startswith("CMD "))
+    command = json.loads(command_line)
+    ingress = yaml.safe_load(
+        (ROOT / "platform/live-lab/manifests/app/patches/patch-ingress-live-lab.yaml").read_text()
+    )
+    annotations = ingress["metadata"]["annotations"]
+    raw_attributes = annotations["alb.ingress.kubernetes.io/load-balancer-attributes"]
+    attributes = dict(
+        item.split("=", 1)
+        for item in raw_attributes.split(",")
+    )
+
+    assert attributes["deletion_protection.enabled"] == "false"
+    assert int(command[command.index("--threads") + 1]) >= 2
+    assert int(command[command.index("--keep-alive") + 1]) > int(attributes["idle_timeout.timeout_seconds"])
+
+
 def test_gitops_canary_requires_external_alb_metrics(workload):
     template = next(item for item in workload if item["kind"] == "AnalysisTemplate")
     rollout = next(item for item in workload if item["kind"] == "Rollout")

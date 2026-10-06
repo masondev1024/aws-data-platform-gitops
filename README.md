@@ -167,6 +167,7 @@ python scripts/verify_gitops_deployment.py \
 ## 검증된 운영 증거와 범위
 
 - 새 세션의 원본 evidence, 부하 로그, 계정·리소스 식별자와 인증 정보는 로컬에 둡니다. 정적 검증과 실환경 결과를 구분하고 과거 결과를 현재 변경의 증거로 사용하지 않습니다.
+- 2026-10-06 AWS 단기 검증에서 Argo CD PreSync 마이그레이션, 안정 Rollout 4/4와 ALB target 4/4, HTTPS 준비도 150/150을 확인했습니다(자체 서명 인증서의 체인 검증은 제외). 그러나 13분 응모 기준 부하는 ALB 502 한 건으로 15,599/15,600 요청·3,899/3,900 응모에 그쳐 게이트가 차단했습니다. 제한된 재시도에서도 ALB 502가 재발해 카나리는 실행하지 않았습니다. Gunicorn/ALB 연결 유휴시간 설정은 수정했지만, 새 이미지의 실AWS 재검증 전에는 장애 해결이나 E2E 완료로 주장하지 않습니다.
 - 현재 기본 Terraform 프로필은 비용 보호를 위해 full-stack apply가 차단되어 있으며, 검증이 끝난 AWS 리소스는 상시 유지하지 않습니다.
 - Kafka relay/consumer와 S3 lakehouse 흐름은 별도 [`d2c-event-data-platform`](https://github.com/masondev1024/d2c-event-data-platform) 저장소에서 운영 설계와 로컬 검증 증거를 관리합니다. 이 저장소는 그 앞단의 실제 D2C 서비스 승인 경계와 배포 플랫폼 증거를 담당합니다.
 
