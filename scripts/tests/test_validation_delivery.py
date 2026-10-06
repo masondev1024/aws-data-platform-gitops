@@ -46,6 +46,17 @@ def test_gitops_owns_workloads_but_not_dynamic_platform_resources(workload):
             assert app["envFrom"][-1] == {"secretRef": {"name": "raffle-secret"}}
 
 
+def test_validation_rollout_waits_for_alb_target_deregistration(workload):
+    rollout = next(item for item in workload if item["kind"] == "Rollout")
+    pod = rollout["spec"]["template"]["spec"]
+    app = next(container for container in pod["containers"] if container["name"] == "app-container")
+
+    assert pod["terminationGracePeriodSeconds"] == 60
+    assert app["lifecycle"]["preStop"]["exec"]["command"] == [
+        "/usr/bin/python3", "-c", "import time; time.sleep(30)"
+    ]
+
+
 def test_mismatched_or_unreviewed_image_blocks_bootstrap(workload):
     with pytest.raises(delivery.g.CheckFailed, match="reviewed image"):
         delivery.validate_workload(workload, "registry.invalid/reviewed@sha256:" + "a" * 64)

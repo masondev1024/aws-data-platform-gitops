@@ -8,7 +8,7 @@
       exec:
         # The app image is distroless (no shell); keep serving while the
         # endpoint and ALB target deregistration propagate before SIGTERM.
-        command: ["/usr/bin/python3", "-c", "import time; time.sleep(10)"]
+        command: ["/usr/bin/python3", "-c", "import time; time.sleep(30)"]
 - op: replace
   path: /spec/template/spec/containers/0/env/1/value
   value: validation

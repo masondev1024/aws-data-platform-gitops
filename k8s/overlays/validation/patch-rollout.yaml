@@ -40,3 +40,14 @@
     - name: rds-ca-bundle
       configMap:
         name: rds-ca-bundle
+- op: add
+  path: /spec/template/spec/terminationGracePeriodSeconds
+  value: 60
+- op: add
+  path: /spec/template/spec/containers/0/lifecycle
+  value:
+    preStop:
+      exec:
+        # Keep the distroless app alive while EndpointSlice and ALB target
+        # deregistration propagate; the ALB drain window is 30 seconds.
+        command: ["/usr/bin/python3", "-c", "import time; time.sleep(30)"]
