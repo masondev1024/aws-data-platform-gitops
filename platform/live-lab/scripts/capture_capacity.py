@@ -4,7 +4,8 @@
 Run after the interval ends. Example (epochs/context supplied by the operator):
   python3 platform/live-lab/scripts/capture_capacity.py --start START --end END \
     --profile develope-test --account ACCOUNT --region REGION --session SESSION --approval APPROVAL \
-    --context arn:aws:eks:REGION:ACCOUNT:cluster/kyobo-SESSION --output DIRECTORY
+    --context arn:aws:eks:REGION:ACCOUNT:cluster/kyobo-SESSION \
+    --service canary --output DIRECTORY
 
 Owns a temporary loopback-only port-forward to the validated cluster's fixed
 Prometheus service. An occupied port is rejected, never reused. Kubernetes CLI
@@ -47,6 +48,7 @@ def arguments(argv=None):
         parser.add_argument('--' + name, required=True)
     parser.add_argument('--start', type=int, required=True)
     parser.add_argument('--end', type=int, required=True)
+    parser.add_argument('--service', choices=('stable', 'canary'), default='stable')
     parser.add_argument('--prometheus-port', type=int, default=19091)
     args = parser.parse_args(argv)
     require(bool(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}', args.profile)), 'invalid profile')
@@ -63,9 +65,10 @@ def arguments(argv=None):
     return args
 
 
-def queries():
-    # Stable service only prevents duplicate stable/canary scrapes of the same pod.
-    app = 'namespace="platform-validation",service="data-pipeline-svc-stable"'
+def queries(service='stable'):
+    require(service in {'stable', 'canary'}, 'invalid service')
+    # Select one service so stable/canary scrapes of a pod are not double counted.
+    app = f'namespace="platform-validation",service="data-pipeline-svc-{service}"'
     http = app + ',route!~"/(metrics|healthz|readyz)"'
     def rate(metric, labels=app):
         return f'rate({metric}{{{labels}}}[2m])'
@@ -270,7 +273,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 def collect_prometheus(args, process):
     output = {}
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
-    for name, query in queries().items():
+    for name, query in queries(args.service).items():
         try:
             require(process.poll() is None, 'owned port-forward exited')
             params = urllib.parse.urlencode({'query': query, 'start': args.start, 'end': args.end,
@@ -301,12 +304,12 @@ def write_report(directory, report):
 def capture(args):
     reader = Reader(args)
     report = {'status': 'unknown', 'scope': {k: getattr(args, k) for k in
-        ('profile', 'account', 'region', 'session', 'approval', 'context', 'start', 'end')},
+        ('profile', 'account', 'region', 'session', 'approval', 'context', 'start', 'end', 'service')},
         'step_seconds': STEP, 'max_command_invocations': MAX_COMMANDS,
-        'max_prometheus_requests': len(queries()),
+        'max_prometheus_requests': len(queries(args.service)),
         'limitations': ['Completeness is not a health/SLO verdict.',
             'Kubernetes CLI snapshots are capture-time only; historical samples come from Prometheus.',
-            'Stable-service application metrics; 2-minute rolling rates/counts include pre-start warmup.',
+            'Selected-service application metrics; 2-minute rolling rates/counts include pre-start warmup.',
             'DB histogram includes connection/TLS attempts, including failures; it does not prove TLS negotiation.',
             'No traffic may yield unknown quantiles/ratios; no zero filling.',
             'CLI/API invocation budget excludes kubectl discovery/authentication internals.']}
