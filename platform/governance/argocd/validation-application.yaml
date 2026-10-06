@@ -12,6 +12,17 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: platform-validation
+  # The ALB identity is verified and bound by the session operator after the
+  # ingress exists; Git must not erase those two runtime-only labels on sync.
+  ignoreDifferences:
+    - group: argoproj.io
+      kind: Rollout
+      name: data-pipeline-rollout
+      namespace: platform-validation
+      jsonPointers:
+        - /metadata/labels/live-lab.aws~1alb-name
+        - /metadata/labels/live-lab.aws~1alb-id
   syncPolicy:
     syncOptions:
       - CreateNamespace=false
+      - RespectIgnoreDifferences=true

@@ -1,5 +1,6 @@
 """Offline contract checks; these do not prove a live Argo deployment."""
 import importlib.util
+import copy
 import json
 from pathlib import Path
 import subprocess
@@ -55,6 +56,68 @@ def test_validation_rollout_waits_for_alb_target_deregistration(workload):
     assert app["lifecycle"]["preStop"]["exec"]["command"] == [
         "/usr/bin/python3", "-c", "import time; time.sleep(30)"
     ]
+
+
+def test_gitops_canary_requires_external_alb_metrics(workload):
+    template = next(item for item in workload if item["kind"] == "AnalysisTemplate")
+    rollout = next(item for item in workload if item["kind"] == "Rollout")
+    metrics = {item["name"]: item for item in template["spec"]["metrics"]}
+    assert {"alb-elb-error-rate", "alb-target-error-rate", "alb-target-response-p95"} <= metrics.keys()
+    assert {item["name"] for item in template["spec"]["args"]} >= {"alb-name", "alb-id"}
+    steps = rollout["spec"]["strategy"]["canary"]["steps"]
+    for step in (steps[2], steps[5]):
+        args = {item["name"]: item for item in step["analysis"]["args"]}
+        assert args["alb-name"]["valueFrom"]["fieldRef"]["fieldPath"] == (
+            "metadata.labels['live-lab.aws/alb-name']"
+        )
+        assert args["alb-id"]["valueFrom"]["fieldRef"]["fieldPath"] == (
+            "metadata.labels['live-lab.aws/alb-id']"
+        )
+
+
+def test_gitops_sync_preserves_operator_bound_alb_identity():
+    application = yaml.safe_load((ROOT / "platform/governance/argocd/validation-application.yaml").read_text())
+    assert "RespectIgnoreDifferences=true" in application["spec"]["syncPolicy"]["syncOptions"]
+    ignored = application["spec"]["ignoreDifferences"]
+    assert len(ignored) == 1
+    assert ignored[0]["group"] == "argoproj.io"
+    assert ignored[0]["kind"] == "Rollout"
+    assert ignored[0]["name"] == "data-pipeline-rollout"
+    assert ignored[0]["namespace"] == "platform-validation"
+    assert ignored[0]["jsonPointers"] == [
+        "/metadata/labels/live-lab.aws~1alb-name",
+        "/metadata/labels/live-lab.aws~1alb-id",
+    ]
+
+
+def test_changed_image_requires_verified_alb_binding_before_sync():
+    old = "registry.example.test/app:old@sha256:" + "a" * 64
+    new = "registry.example.test/app:new@sha256:" + "b" * 64
+    rollout = {"metadata": {"uid": "rollout-1", "labels": {
+        "live-lab.aws/alb-name": "k8s-platform-example",
+        "live-lab.aws/alb-id": "0123456789abcdef",
+    }}, "spec": {"template": {"spec": {"containers": [{"image": old}]}}}}
+    scope = ("live-261006-01", "SS0-20261006-test", "123456789012", "ap-northeast-2", "kyobo-live-261006-01")
+    proof = {"status": "verified", "session": scope[0], "approval": scope[1],
+             "account": scope[2], "region": scope[3], "cluster": scope[4],
+             "rollout_uid": "rollout-1", "alb_dimension": "app/k8s-platform-example/0123456789abcdef"}
+    delivery.validate_canary_binding(rollout, new, proof, *scope)
+    for invalid in (None, {**proof, "session": "other-session"},
+                    {**proof, "alb_dimension": "app/foreign/0123456789abcdef"}):
+        with pytest.raises(delivery.g.CheckFailed):
+            delivery.validate_canary_binding(rollout, new, invalid, *scope)
+    delivery.validate_canary_binding(rollout, old, None, *scope)
+
+
+def test_bootstrap_rejects_gitops_manifest_without_cloudwatch_gate(workload):
+    altered = copy.deepcopy(workload)
+    rollout = next(item for item in altered if item["kind"] == "Rollout")
+    image = rollout["spec"]["template"]["spec"]["containers"][0]["image"]
+    template = next(item for item in altered if item["kind"] == "AnalysisTemplate")
+    template["spec"]["metrics"] = [metric for metric in template["spec"]["metrics"]
+                                    if metric["name"] != "alb-target-response-p95"]
+    with pytest.raises(delivery.g.CheckFailed, match="CloudWatch"):
+        delivery.validate_workload(altered, image)
 
 
 def test_mismatched_or_unreviewed_image_blocks_bootstrap(workload):

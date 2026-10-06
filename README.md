@@ -12,6 +12,8 @@
 
 검증 환경의 GitOps 경로는 `k8s/overlays/validation`입니다. DB 주소·인증 정보·RDS CA·세션별 Ingress는 플랫폼 부트스트랩이 준비하고, 앱·PreSync 마이그레이션·정기 작업은 Argo CD만 배포합니다. `platform/live-lab/scripts/deploy_gitops_validation.py`는 `--execute`를 지정하기 전에는 앱을 변경하지 않으며, 실행 시 계정·클러스터 소유 태그·main SHA·고정 이미지 digest와 `--bundle-dir`의 CI 서명을 재검증합니다. 반환하는 `sync_requested`는 배포 성공이 아닙니다. 이후 `observe_gitops_as_developer.py`로 실제 단기 조회 계정을 발급해 실행 버전을 확인하고 HTTP 응답·DB 정합성·canary 복구를 별도로 검증해야 합니다.
 
+첫 GitOps 동기화로 Ingress와 ALB가 생성된 뒤에는 운영자가 세션 ALB의 WAF 연결을 검증하고 `platform/live-lab/scripts/bind_gitops_alb_identity.py`로 확인된 ALB 이름·ID만 Rollout 메타데이터에 묶습니다. 이 식별값은 GitOps가 관리하는 애플리케이션 사양과 분리되며, Argo CD는 두 라벨만 동기화 중 보존합니다. 다음 이미지 변경을 요청할 때 `deploy_gitops_validation.py --alb-binding-evidence`에 이 로컬 검증 기록을 지정해야 합니다. 다른 세션의 ALB, 누락된 식별값 또는 WAF 연결이면 동기화 전에 중단합니다. 실제 CloudWatch 분석 결과와 외부 p95 통과 여부는 별도로 확인해야 합니다.
+
 현재 임시 검증 프로필은 생성·정리를 포함해 최대 3시간, USD 1 예비비를 포함한 USD 5.50 이하로 제한합니다. 종료 감시기는 시작 후 2시간 이내에 정리를 시작하고, 검증이 먼저 끝나면 즉시 정리합니다. 새 DB는 표준 지원 중인 MySQL 8.4를 사용하며 유료 연장 지원 자동 가입을 차단합니다. 클라우드 청구 지연이나 정리 실패까지 강제 차단하는 하드캡은 아닙니다.
 
 ## CI/CD

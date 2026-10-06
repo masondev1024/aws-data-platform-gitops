@@ -71,6 +71,7 @@ run_python_security() {
   "$PYTHON_BIN" -m bandit --quiet --severity-level high scripts/collect_agentic_incident.py scripts/triage_incident.py scripts/platform_doctor.py
   "$PYTHON_BIN" -m bandit --quiet --severity-level high scripts/verify_release_bundle.py scripts/verify_gitops_deployment.py
   "$PYTHON_BIN" -m bandit --quiet --severity-level high platform/live-lab/scripts/deploy_gitops_validation.py
+  "$PYTHON_BIN" -m bandit --quiet --severity-level high platform/live-lab/scripts/bind_gitops_alb_identity.py
   "$PYTHON_BIN" -m bandit --quiet --severity-level high platform/live-lab/scripts/observe_gitops_as_developer.py
 }
 
