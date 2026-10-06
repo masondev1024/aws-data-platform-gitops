@@ -47,6 +47,16 @@ def test_gitops_owns_workloads_but_not_dynamic_platform_resources(workload):
             assert app["envFrom"][-1] == {"secretRef": {"name": "raffle-secret"}}
 
 
+def test_new_image_sync_checks_stable_baseline_before_mutating_cluster():
+    source = (ROOT / "platform/live-lab/scripts/deploy_gitops_validation.py").read_text()
+    assert 'parser.add_argument("--baseline-run-id"' in source
+    assert "if current_image != a.image_reference:" in source
+    assert "gate.verify_baseline_evidence(" in source
+    assert "gate.verify_live_capacity(" in source
+    assert source.index("gate.verify_baseline_evidence(") < source.index("gate.verify_live_capacity(")
+    assert source.index("gate.verify_live_capacity(") < source.index('g.run(kube + ["apply",')
+
+
 def test_validation_rollout_waits_for_alb_target_deregistration(workload):
     rollout = next(item for item in workload if item["kind"] == "Rollout")
     pod = rollout["spec"]["template"]["spec"]
