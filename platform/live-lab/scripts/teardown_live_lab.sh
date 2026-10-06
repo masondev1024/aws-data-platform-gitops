@@ -43,7 +43,7 @@ on_error() {
 [[ -f "$LIVE_LAB_TFVARS" && ! -L "$LIVE_LAB_TFVARS" ]] || { echo "BLOCKED: tfvars file missing or symlinked." >&2; exit 2; }
 tfvars_path="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$LIVE_LAB_TFVARS")"
 [[ "$tfvars_path" == "$repo_root/$EVIDENCE_DIR/"* ]] || { echo "BLOCKED: tfvars must stay in the session evidence directory." >&2; exit 2; }
-tfvars_mode="$(stat -f '%Lp' "$tfvars_path" 2>/dev/null || stat -c '%a' "$tfvars_path")"
+tfvars_mode="$(stat -c '%a' "$tfvars_path" 2>/dev/null || stat -f '%Lp' "$tfvars_path")"
 [[ "$tfvars_mode" == 600 ]] || { echo "BLOCKED: tfvars mode must be 0600." >&2; exit 2; }
 
 identity="$(aws --profile "$AWS_PROFILE" --region "$AWS_REGION" sts get-caller-identity --query Account --output text)"

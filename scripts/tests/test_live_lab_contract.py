@@ -887,6 +887,11 @@ def test_deadline_watchdog_validates_private_session_scope_and_stays_local():
 
 def test_live_lab_provisioning_apply_is_bound_to_the_validated_saved_plan():
     wrapper = read("platform/live-lab/scripts/apply_session_plan.sh")
+    watchdog = read("platform/live-lab/scripts/deadline_watchdog.sh")
+    teardown = read("platform/live-lab/scripts/teardown_live_lab.sh")
+    for script in (wrapper, watchdog, teardown):
+        assert script.index("stat -c '%a'") < script.index("stat -f '%Lp'")
+
     plan_at = wrapper.index('terraform -chdir="$terraform_dir" plan')
     show_at = wrapper.index('terraform -chdir="$terraform_dir" show -json "$plan_file"')
     validate_at = wrapper.index('scripts/validate_session_plan.py')
@@ -926,10 +931,12 @@ def test_live_lab_apply_wrapper_never_applies_a_rejected_plan(tmp_path):
     plan_file = evidence_dir / f"{session_id}-validated-{plan_id}.tfplan"
     plan_json = evidence_dir / f"{session_id}-validated-{plan_id}.plan.json"
     calls_path = tmp_path / "terraform-calls.jsonl"
+    stat_calls_path = tmp_path / "stat-calls.jsonl"
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     aws_stub = bin_dir / "aws"
     terraform_stub = bin_dir / "terraform"
+    stat_stub = bin_dir / "stat"
     aws_stub.write_text("#!/usr/bin/env python3\nprint('123456789012')\n", encoding="utf-8")
     terraform_stub.write_text(
         "#!/usr/bin/env python3\n"
@@ -946,8 +953,20 @@ def test_live_lab_apply_wrapper_never_applies_a_rejected_plan(tmp_path):
         "    print(json.dumps({'format_version':'1.2','errored':True,'applyable':False,'complete':False}))\n",
         encoding="utf-8",
     )
+    stat_stub.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, sys\n"
+        "with open(os.environ['MOCK_STAT_CALLS'], 'a', encoding='utf-8') as out:\n"
+        "    out.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "if sys.argv[1:3] == ['-c', '%a']:\n"
+        "    print('600')\n"
+        "else:\n"
+        "    raise SystemExit(1)\n",
+        encoding="utf-8",
+    )
     aws_stub.chmod(0o700)
     terraform_stub.chmod(0o700)
+    stat_stub.chmod(0o700)
     tfvars_path.write_text(json.dumps({
         "aws_account_id": "123456789012",
         "aws_region": "ap-northeast-2",
@@ -964,6 +983,7 @@ def test_live_lab_apply_wrapper_never_applies_a_rejected_plan(tmp_path):
         "LIVE_LAB_TFVARS": str(tfvars_path),
         "LIVE_LAB_PLAN_RUN_ID": plan_id,
         "MOCK_TERRAFORM_CALLS": str(calls_path),
+        "MOCK_STAT_CALLS": str(stat_calls_path),
         "PATH": f"{bin_dir}:{env['PATH']}",
     })
     try:
@@ -973,6 +993,8 @@ def test_live_lab_apply_wrapper_never_applies_a_rejected_plan(tmp_path):
         )
         assert result.returncode == 2
         assert "Terraform plan is errored" in result.stderr
+        stat_calls = [json.loads(line) for line in stat_calls_path.read_text(encoding="utf-8").splitlines()]
+        assert stat_calls[0][:2] == ["-c", "%a"]
         calls = [json.loads(line) for line in calls_path.read_text(encoding="utf-8").splitlines()]
         assert [call[1] for call in calls] == ["workspace", "plan", "show"]
         assert not plan_file.is_symlink()
