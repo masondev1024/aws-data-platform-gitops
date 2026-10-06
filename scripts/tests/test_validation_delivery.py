@@ -124,6 +124,7 @@ def test_gitops_sync_preserves_operator_bound_alb_identity():
     assert ignored[0]["name"] == "data-pipeline-rollout"
     assert ignored[0]["namespace"] == "platform-validation"
     assert ignored[0]["jsonPointers"] == [
+        "/spec/replicas",
         "/metadata/labels/live-lab.aws~1alb-name",
         "/metadata/labels/live-lab.aws~1alb-id",
         "/metadata/labels/live-lab.aws~1canary-tg-name",
