@@ -24,6 +24,11 @@ SPEC = importlib.util.spec_from_file_location(
 installer = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(installer)
 g = installer.g
+GATE_SPEC = importlib.util.spec_from_file_location(
+    "precanary_gate", ROOT / "platform/live-lab/scripts/precanary_gate.py"
+)
+gate = importlib.util.module_from_spec(GATE_SPEC)
+GATE_SPEC.loader.exec_module(gate)
 APP_NAME = "data-pipeline-validation"
 
 
@@ -228,6 +233,8 @@ def main():
                         help="Downloaded CI release artifact; signatures are reverified before mutation")
     parser.add_argument("--alb-binding-evidence",
                         help="Verified operator ALB binding; required when the Rollout image changes")
+    parser.add_argument("--baseline-run-id",
+                        help="Successful same-session 13-minute stable-only canary-apply run before a new image")
     a = parser.parse_args()
     g.validate_args(a)
     g.require(a.region == "ap-northeast-2", "only the approved Seoul region is supported")
@@ -257,9 +264,29 @@ def main():
         if current_name.stdout.strip():
             existing_rollout = g.document(g.run(kube + ["-n", g.NAMESPACE, "get", "rollout",
                                                      "data-pipeline-rollout", "-o", "json"]))
+    proof = binding_proof(a.alb_binding_evidence)
     validate_canary_binding(existing_rollout, a.image_reference,
-                            binding_proof(a.alb_binding_evidence), a.session, a.approval,
+                            proof, a.session, a.approval,
                             a.account, a.region, a.cluster)
+    if existing_rollout:
+        containers = existing_rollout.get("spec", {}).get("template", {}).get("spec", {}).get(
+            "containers", [])
+        g.require(isinstance(containers, list) and len(containers) == 1 and
+                  isinstance(containers[0], dict), "existing Rollout container is unknown")
+        current_image = containers[0].get("image", "")
+        g.require(bool(current_image), "existing Rollout image is unknown")
+        if current_image != a.image_reference:
+            g.require(bool(a.baseline_run_id), "new image requires a passing stable baseline run")
+            try:
+                baseline = gate.verify_baseline_evidence(
+                    ROOT / "platform/live-lab/evidence", a.session, a.baseline_run_id)
+                capacity = gate.verify_live_capacity(
+                    kube, existing_rollout, proof, account=a.account, region=a.region,
+                    session=a.session, approval=a.approval, cluster=a.cluster,
+                    run_json=lambda command: g.document(g.run(command)))
+            except gate.GateError as exc:
+                raise g.CheckFailed(f"precanary gate blocked: {exc}") from exc
+            report["precanary_baseline"] = {"baseline": baseline, "capacity": capacity}
     outputs = g.document(g.run(["terraform", f"-chdir={ROOT / 'platform/live-lab/terraform'}", "output", "-json"]))
     certificate = (ROOT / "platform/live-lab/evidence/acm-certificate-arn.txt").read_text().strip()
     tags = g.document(g.run(["aws", "--region", a.region, "acm", "list-tags-for-certificate",

@@ -6,6 +6,7 @@ resources:
 components:
   - ../../../../k8s/components/alb-canary-gate
 patches:
+  - path: patches/patch-hpa-live-lab.yaml
   - path: patches/patch-migration-live-lab.yaml
   - path: patches/patch-cronjob-live-lab.yaml
   - path: patches/patch-ingress-live-lab.yaml
