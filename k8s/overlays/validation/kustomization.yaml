@@ -8,8 +8,8 @@ components:
 images:
   - name: data-pipeline-app
     newName: 854745312525.dkr.ecr.eu-west-1.amazonaws.com/data-pipeline-app
-    newTag: 31196b976302483a5aee928d27faea65103cc9e5
-    digest: sha256:05984172aa74d5f5cd1ece711e696c075e659a94a90d7d10defeafe5ae8a221b
+    newTag: e426d8db675e62e9ac55b5ba6ab913e05114b767
+    digest: sha256:7a317a9de5b7d4c839c80f4b764242b2abb4a743a48018c633472d59ee93f158
 patches:
   - target:
       group: argoproj.io
