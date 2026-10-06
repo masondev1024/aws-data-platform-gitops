@@ -89,6 +89,8 @@ EKS API는 기본적으로 private endpoint이며, 로컬에서 Terraform/Helm b
 
 테스트 비용을 줄이기 위해 기본값은 EKS worker 1대(`t3.medium`), NAT Gateway 1개, RDS primary-only·Single-AZ로 조정했습니다. 고가용성 검증이 필요한 경우에만 `enable_multi_az_nat=true`, `enable_rds_replica=true`, `enable_rds_multi_az=true`, node 수 증가를 별도로 선택합니다. RDS Multi-AZ는 동기 standby와 failover drill을 위한 명시적 비용 선택이며, 전체 선택 근거와 실제 측정값은 로컬 전용 engineering notes에 기록합니다.
 
+`platform/live-lab`의 승인된 실환경 세션은 `prepare_session.sh`로 세션 입력을 만들고, Secret을 승인·생성한 뒤 `apply_session_plan.sh`만 사용합니다. 이 진입점이 비용을 먼저 확인하고 Terraform plan을 만든 다음, JSON plan의 실행 가능 상태·계정·리전·비용·리소스 모양을 검사한 후 **검사한 동일한 저장 plan**만 적용합니다. plan과 JSON 증거는 권한 `0600`으로 로컬 전용 `platform/live-lab/evidence/`에 보관합니다. 재실행 때는 `LIVE_LAB_RUN_ID`로 watchdog·teardown 결과를 분리하지만, 요청 원장은 Terraform `SESSION_ID` 기준이라 같은 세션의 재시도 요청도 200,000건 한도에 누적됩니다. 정리 plan도 시도별 파일로 보존하며 watchdog가 신호로 중단되면 즉시 범위 한정 정리를 시도합니다. 이 경로에서는 `terraform apply`를 직접 실행하지 말고 정리에는 `teardown_live_lab.sh`를 사용합니다.
+
 ## 배포 전 조건
 
 배포 namespace에는 다음 ConfigMap과 Secret을 먼저 준비합니다. 운영 overlay도 RDS 인증서를 검증하며, 관리 계정은 마이그레이션 Job에만 전달합니다.
@@ -177,10 +179,17 @@ python scripts/verify_gitops_deployment.py \
    통과시킵니다.
 3. 승인 요청은 DB row와 transactional outbox event를 같은 트랜잭션으로 기록하고,
    writer DB parity SLI가 실제 데이터 정합성을 측정합니다.
-4. Argo Rollouts는 HTTP 5xx·p95 latency·도메인 무결성 parity를 기준으로 canary를
-   승격하거나 stable로 자동 복귀시킵니다.
-5. 승인된 outbox는 별도 Kafka 이벤트 플랫폼에서 계약 검증·중복 제거·DLQ를 거쳐
+4. Argo Rollouts는 canary별 Prometheus 지표와 세션 ALB의 CloudWatch 5xx·target p95를
+   함께 확인해 승격하거나 stable로 자동 복귀시킵니다. ALB 신호는 전용 ALB 전체를
+   감시하고, canary 자체의 오류·정합성은 서비스 라벨이 붙은 Prometheus 지표가 맡습니다.
+5. Pod 종료에는 distroless 이미지에서 동작하는 preStop 대기와 60초 grace period를
+   두고, live-lab ALB target drain은 30초로 제한합니다.
+6. 승인된 outbox는 별도 Kafka 이벤트 플랫폼에서 계약 검증·중복 제거·DLQ를 거쳐
    S3 Parquet/Iceberg 계층으로 적재됩니다.
+
+CloudWatch canary gate와 종료/drain 설정은 현재 GitOps 매니페스트 및 로컬 계약 테스트에
+반영되어 있습니다. 이번 수정분의 실AWS 재검증은 별도 기록이 확인되기 전까지 완료된
+것으로 간주하지 않습니다.
 
 따라서 면접에서는 “Kafka를 사용했다”가 아니라, 내부 개발자 경험·배포 안전성·
 트랜잭션 정합성·데이터 레이크 소비까지 하나의 운영 경계로 설계한 이유와 실패 시

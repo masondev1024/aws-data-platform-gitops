@@ -48,9 +48,6 @@ fi
 if [[ -z "${ALB_CERTIFICATE_ARN:-}" && -s "platform/live-lab/evidence/acm-certificate-arn.txt" ]]; then
   ALB_CERTIFICATE_ARN="$(< platform/live-lab/evidence/acm-certificate-arn.txt)"
 fi
-if [[ -z "${WAF_WEB_ACL_ARN:-}" ]]; then
-  WAF_WEB_ACL_ARN="$(terraform -chdir="$terraform_dir" output -raw waf_web_acl_arn 2>/dev/null || true)"
-fi
 if [[ -z "${OPERATOR_CIDR:-}" ]]; then
   OPERATOR_CIDR="$(terraform -chdir="$terraform_dir" output -raw operator_cidr 2>/dev/null || true)"
 fi
@@ -72,10 +69,6 @@ for endpoint in "$DB_WRITER_HOST" "$DB_READER_HOST"; do
 done
 if [[ ! "$ALB_CERTIFICATE_ARN" =~ ^arn:aws:acm:[a-z0-9-]+:[0-9]{12}:certificate/[A-Fa-f0-9-]+$ ]]; then
   echo "BLOCKED: a session ACM certificate ARN is required for the HTTPS-only live ingress." >&2
-  exit 2
-fi
-if [[ ! "$WAF_WEB_ACL_ARN" =~ ^arn:aws:wafv2:[a-z0-9-]+:[0-9]{12}:regional/webacl/[A-Za-z0-9_-]+/[A-Fa-f0-9-]+$ ]]; then
-  echo "BLOCKED: the session-scoped regional WAF Web ACL ARN is required for the ALB ingress." >&2
   exit 2
 fi
 if [[ ! "$OPERATOR_CIDR" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/32$ ]]; then
@@ -102,7 +95,6 @@ chmod 600 "$tmp_dir/rendered-bootstrap.yaml"
 /bin/mv "$tmp_dir/rendered-bootstrap.yaml" platform/live-lab/evidence/rendered-bootstrap-manifests.yaml
 write_render platform/live-lab/evidence/rendered-app-manifests.yaml platform/live-lab/manifests/app
 sed -e "s|__ALB_CERTIFICATE_ARN__|${ALB_CERTIFICATE_ARN}|g" \
-  -e "s|__WAF_WEB_ACL_ARN__|${WAF_WEB_ACL_ARN}|g" \
   -e "s|__OPERATOR_CIDR__|${OPERATOR_CIDR}|g" \
   -e "s|__SESSION_ID__|${SESSION_ID}|g" \
   -e "s|__APPROVAL_ID__|${APPROVAL_ID}|g" \

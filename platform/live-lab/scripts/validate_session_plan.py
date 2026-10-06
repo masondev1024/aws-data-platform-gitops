@@ -59,13 +59,22 @@ def walk(module: dict):
 
 
 def validate(path: str, account: str, region: str, session: str, approval: str, budget: float,
-             hours: float = 3, reserve: float = 1, requests: int = 40_000) -> list[str]:
+             hours: float = 3, reserve: float = 1, requests: int = 200_000) -> list[str]:
     cost = estimate(hours, requests, budget, reserve)
     if not cost["within_budget"]:
         raise ValueError("estimated session including reserve exceeds approved budget")
     if not math.isfinite(hours) or not 1 <= hours <= 3:
         raise ValueError("approved hours must be between one and three")
     plan = json.loads(Path(path).read_text(encoding="utf-8"))
+    format_version = plan.get("format_version")
+    if not isinstance(format_version, str) or not re.fullmatch(r"1\.[0-9]+", format_version):
+        raise ValueError("Terraform plan JSON format is missing or has an unsupported major version")
+    if plan.get("errored") is not False:
+        raise ValueError("Terraform plan is errored or does not explicitly report errored=false")
+    if plan.get("applyable") is not True:
+        raise ValueError("Terraform plan is not applyable")
+    if plan.get("complete") is not True:
+        raise ValueError("Terraform plan is incomplete")
     variables = {key: item.get("value") for key, item in plan.get("variables", {}).items()}
     expected_variables = {
         "aws_account_id": account,
@@ -146,13 +155,71 @@ def validate(path: str, account: str, region: str, session: str, approval: str, 
             raise ValueError(f"planned resource tag mismatch: {resource.get('address')}")
 
     changes = plan.get("resource_changes", [])
-    actions_by_address = {item.get("address"): item.get("change", {}).get("actions", []) for item in changes}
-    non_create = [
-        address for address, actions in actions_by_address.items()
-        if address.startswith("aws_") and actions != ["create"]
-    ]
-    if non_create:
-        raise ValueError(f"fresh session plan contains update/delete/replace actions: {non_create}")
+    aws_changes = {
+        item.get("address"): item
+        for item in changes
+        if item.get("mode") == "managed" and item.get("type", "").startswith("aws_")
+    }
+    missing_actions = sorted(set(by_address) - set(aws_changes))
+    if missing_actions:
+        raise ValueError(f"plan omits explicit actions for managed AWS resources: {missing_actions}")
+
+    expected_attachments = {
+        "aws_iam_role_policy_attachment.ecr_readonly": (
+            f"kyobo-{session}-node", "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+        ),
+        "aws_iam_role_policy_attachment.eks_cluster": (
+            f"kyobo-{session}-eks-cluster", "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+        ),
+        "aws_iam_role_policy_attachment.eks_cni": (
+            f"kyobo-{session}-node", "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+        ),
+        "aws_iam_role_policy_attachment.eks_worker_node": (
+            f"kyobo-{session}-node", "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+        ),
+    }
+    expected_tags = {"Project": "kyobo-platform-live-lab", "Session": session, "Approval": approval}
+    unsupported_actions = []
+    for address, item in aws_changes.items():
+        change = item.get("change", {})
+        actions = change.get("actions", [])
+        if actions == ["create"]:
+            continue
+        if actions != ["no-op"]:
+            unsupported_actions.append(address)
+            continue
+
+        before = change.get("before")
+        after = change.get("after")
+        planned = by_address.get(address, {}).get("values")
+        if not isinstance(before, dict) or not isinstance(after, dict) or before != after or after != planned:
+            raise ValueError(f"pre-existing AWS resource does not match refreshed, unchanged plan state: {address}")
+
+        tags = before.get("tags_all") or before.get("tags") or {}
+        if tags:
+            if any(tags.get(key) != value for key, value in expected_tags.items()):
+                raise ValueError(f"pre-existing AWS resource is outside the approved session tags: {address}")
+            continue
+
+        if item.get("type") == "aws_iam_role_policy_attachment":
+            expected_attachment = expected_attachments.get(address)
+            if expected_attachment is None or (before.get("role"), before.get("policy_arn")) != expected_attachment:
+                raise ValueError(f"untagged IAM attachment is outside the approved session roles: {address}")
+            continue
+
+        association = re.fullmatch(r"aws_route_table_association\.(private_db|public)\[([01])\]", address)
+        if item.get("type") == "aws_route_table_association" and association:
+            subnet_group, index = association.groups()
+            route_table = by_address.get(f"aws_route_table.{subnet_group}", {}).get("values") or {}
+            subnet = by_address.get(f"aws_subnet.{subnet_group}[{index}]", {}).get("values") or {}
+            if before.get("route_table_id") != route_table.get("id") or before.get("subnet_id") != subnet.get("id"):
+                raise ValueError(f"untagged route-table association is outside the approved VPC subnets: {address}")
+            continue
+
+        raise ValueError(f"pre-existing untagged AWS resource has no approved ownership proof: {address}")
+
+    if unsupported_actions:
+        raise ValueError(f"plan contains AWS actions other than create/no-op: {sorted(unsupported_actions)}")
     return sorted(item.get("address", "") for item in managed)
 
 
@@ -166,7 +233,7 @@ def main() -> int:
     parser.add_argument("--budget", type=float, default=5.5)
     parser.add_argument("--hours", type=float, default=3)
     parser.add_argument("--reserve", type=float, default=1)
-    parser.add_argument("--requests", type=int, default=40_000)
+    parser.add_argument("--requests", type=int, default=200_000)
     args = parser.parse_args()
     try:
         resources = validate(args.plan_json, args.account, args.region, args.session, args.approval,

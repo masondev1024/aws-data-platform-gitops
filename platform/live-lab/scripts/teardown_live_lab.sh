@@ -10,6 +10,7 @@ cd "$repo_root"
 : "${EXPECTED_ACCOUNT_ID:?EXPECTED_ACCOUNT_ID is required}"
 : "${SESSION_ID:?SESSION_ID is required}"
 : "${APPROVAL_ID:?APPROVAL_ID is required}"
+: "${LIVE_LAB_RUN_ID:=$SESSION_ID}"
 : "${KUBE_CONTEXT:?KUBE_CONTEXT must point to this session EKS cluster}"
 : "${LIVE_LAB_TFVARS:?LIVE_LAB_TFVARS must be the protected session tfvars file}"
 
@@ -17,7 +18,10 @@ PROJECT="kyobo-platform-live-lab"
 CLUSTER_NAME="kyobo-${SESSION_ID}"
 TERRAFORM_DIR="platform/live-lab/terraform"
 EVIDENCE_DIR="platform/live-lab/evidence"
-STATUS_FILE="$EVIDENCE_DIR/teardown-status.json"
+STATUS_FILE="$EVIDENCE_DIR/teardown-${SESSION_ID}-${LIVE_LAB_RUN_ID}-status.json"
+RESIDUAL_INVENTORY="$EVIDENCE_DIR/${SESSION_ID}-${LIVE_LAB_RUN_ID}-residual-inventory.json"
+TEARDOWN_ATTEMPT_ID="${TEARDOWN_ATTEMPT_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$-$RANDOM}"
+TEARDOWN_PLAN="$repo_root/$EVIDENCE_DIR/${SESSION_ID}-${LIVE_LAB_RUN_ID}-teardown-${TEARDOWN_ATTEMPT_ID}.tfplan"
 EXPECTED_CONFIRM="destroy-${SESSION_ID}-${AWS_REGION}"
 tmp_dir=""
 finish_status() { python3 platform/live-lab/scripts/live_lab_lifecycle.py write-status "$STATUS_FILE" "$1" "$2" --session "$SESSION_ID" --region "$AWS_REGION"; }
@@ -31,12 +35,15 @@ on_error() {
 }
 
 [[ "$AWS_REGION" == ap-northeast-2 && "$EXPECTED_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] || { echo "BLOCKED: account/region mismatch." >&2; exit 2; }
-[[ "$SESSION_ID" =~ ^[a-z0-9][a-z0-9-]{5,40}$ && "$APPROVAL_ID" =~ ^SS0-[0-9]{8}-[A-Za-z0-9._-]{3,64}$ ]] || { echo "BLOCKED: invalid session/approval ID." >&2; exit 2; }
+[[ "$SESSION_ID" =~ ^[a-z0-9][a-z0-9-]{5,40}$ && "$APPROVAL_ID" =~ ^SS0-[0-9]{8}-[A-Za-z0-9._-]{3,64}$ ]] || { echo "BLOCKED: invalid session or approval ID." >&2; exit 2; }
+[[ "$LIVE_LAB_RUN_ID" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,64}$ ]] || { echo "BLOCKED: invalid LIVE_LAB_RUN_ID." >&2; exit 2; }
+[[ "$TEARDOWN_ATTEMPT_ID" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,64}$ ]] || { echo "BLOCKED: invalid TEARDOWN_ATTEMPT_ID." >&2; exit 2; }
+[[ ! -e "$TEARDOWN_PLAN" ]] || { echo "BLOCKED: teardown plan evidence already exists; refusing to overwrite it." >&2; exit 2; }
 [[ "${TEARDOWN_CONFIRM:-}" == "$EXPECTED_CONFIRM" ]] || { echo "BLOCKED: set TEARDOWN_CONFIRM=$EXPECTED_CONFIRM to delete only this session." >&2; exit 2; }
 [[ -f "$LIVE_LAB_TFVARS" && ! -L "$LIVE_LAB_TFVARS" ]] || { echo "BLOCKED: tfvars file missing or symlinked." >&2; exit 2; }
 tfvars_path="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$LIVE_LAB_TFVARS")"
 [[ "$tfvars_path" == "$repo_root/$EVIDENCE_DIR/"* ]] || { echo "BLOCKED: tfvars must stay in the session evidence directory." >&2; exit 2; }
-tfvars_mode="$(stat -f '%Lp' "$tfvars_path" 2>/dev/null || stat -c '%a' "$tfvars_path")"
+tfvars_mode="$(stat -c '%a' "$tfvars_path" 2>/dev/null || stat -f '%Lp' "$tfvars_path")"
 [[ "$tfvars_mode" == 600 ]] || { echo "BLOCKED: tfvars mode must be 0600." >&2; exit 2; }
 
 identity="$(aws --profile "$AWS_PROFILE" --region "$AWS_REGION" sts get-caller-identity --query Account --output text)"
@@ -110,9 +117,9 @@ if [[ -s "$tfstate" ]]; then
     terraform -chdir="$TERRAFORM_DIR" show -json > "$tmp_dir/state.json"
     python3 platform/live-lab/scripts/live_lab_lifecycle.py validate-state "$tmp_dir/state.json" --session "$SESSION_ID" --approval "$APPROVAL_ID"
     terraform -chdir="$TERRAFORM_DIR" plan -destroy -input=false -var-file="$tfvars_path" \
-      -var='apply_approval_phrase=APPROVED_FOR_EPHEMERAL_APPLY' -out="$repo_root/$EVIDENCE_DIR/teardown.tfplan"
-    chmod 600 "$repo_root/$EVIDENCE_DIR/teardown.tfplan"
-    terraform -chdir="$TERRAFORM_DIR" apply -input=false -auto-approve "$repo_root/$EVIDENCE_DIR/teardown.tfplan"
+      -var='apply_approval_phrase=APPROVED_FOR_EPHEMERAL_APPLY' -out="$TEARDOWN_PLAN"
+    chmod 600 "$TEARDOWN_PLAN"
+    terraform -chdir="$TERRAFORM_DIR" apply -input=false -auto-approve "$TEARDOWN_PLAN"
     [[ -z "$(terraform -chdir="$TERRAFORM_DIR" state list)" ]] || { echo "BLOCKED: Terraform state still contains resources." >&2; exit 2; }
   else
     echo "Terraform state is already empty; skip destroy plan."
@@ -146,10 +153,10 @@ aws --profile "$AWS_PROFILE" --region "$AWS_REGION" resourcegroupstaggingapi get
   --tag-filters "Key=Project,Values=$PROJECT" "Key=Session,Values=$SESSION_ID" "Key=Approval,Values=$APPROVAL_ID" \
   --resources-per-page 100 --output json > "$tmp_dir/residuals.json"
 python3 platform/live-lab/scripts/live_lab_lifecycle.py reconcile-inventory \
-  "$tmp_dir/residuals.json" "$EVIDENCE_DIR/residual-inventory.json" \
+  "$tmp_dir/residuals.json" "$RESIDUAL_INVENTORY" \
   --project "$PROJECT" --session "$SESSION_ID" --approval "$APPROVAL_ID" \
   --profile "$AWS_PROFILE" --region "$AWS_REGION" --account-id "$EXPECTED_ACCOUNT_ID"
 finish_status completed "Terraform state is empty and every tagged inventory ARN was individually rechecked; no live session-tagged resources were observed. Stale tag-index entries are recorded separately. This is not proof about untagged resources or delayed billing."
 trap - EXIT
 rm -rf "$tmp_dir"
-echo "Teardown complete for session $SESSION_ID. Inventory is at $EVIDENCE_DIR/residual-inventory.json."
+echo "Teardown complete for session $SESSION_ID. Inventory is at $RESIDUAL_INVENTORY."

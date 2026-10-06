@@ -16,6 +16,12 @@ patches:
   - target:
       group: argoproj.io
       version: v1alpha1
+      kind: AnalysisTemplate
+      name: data-pipeline-canary
+    path: patches/patch-analysis-template-cloudwatch.yaml
+  - target:
+      group: argoproj.io
+      version: v1alpha1
       kind: Rollout
       name: data-pipeline-rollout
     path: patches/patch-rollout-live-lab.yaml

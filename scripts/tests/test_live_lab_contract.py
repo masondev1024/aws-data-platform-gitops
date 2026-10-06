@@ -75,6 +75,8 @@ def test_root_aws_resources_depend_on_approval_gate_and_alb_controller_bootstrap
         "aws_ecr_repository\" \"app",
         "aws_iam_policy\" \"aws_load_balancer_controller",
         "aws_iam_role\" \"aws_load_balancer_controller",
+        "aws_iam_policy\" \"argo_rollouts_cloudwatch",
+        "aws_iam_role\" \"argo_rollouts_cloudwatch",
         "aws_wafv2_web_acl\" \"lab",
     ]:
         pattern = rf'resource "{resource_name}" \{{(?P<body>.*?)\n\}}'
@@ -88,6 +90,18 @@ def test_root_aws_resources_depend_on_approval_gate_and_alb_controller_bootstrap
     assert "elasticloadbalancing:CreateLoadBalancer" in policy
     assert "elasticloadbalancing:CreateTargetGroup" in policy
     assert "elasticloadbalancing:DescribeListenerCertificates" in policy
+
+
+def test_managed_node_group_keeps_public_egress_until_node_deletion_completes():
+    main = read("platform/live-lab/terraform/main.tf")
+    node_group = re.search(
+        r'resource "aws_eks_node_group" "lab" \{(?P<body>.*?)\n\}',
+        main,
+        re.DOTALL,
+    )
+
+    assert node_group is not None
+    assert "aws_route_table_association.public" in node_group.group("body")
 
 
 def test_alb_controller_create_time_tag_permission_is_scoped_and_conditioned():
@@ -143,6 +157,14 @@ def test_synchronized_refresh_profile_is_one_bounded_request_per_virtual_user():
     assert "const refreshVus = Number(__ENV.REFRESH_VUS || 10000)" in loadtest
     assert 'elif [[ "$MODE" == "synchronized-refresh" ]]; then\n  planned=10000' in wrapper
     assert '"REFRESH_VUS=10000"' in wrapper
+
+
+def test_live_lab_k6_request_ledger_stays_session_wide_across_execution_retries():
+    wrapper = read("scripts/run_live_lab_k6.sh")
+
+    assert 'LEDGER_PATH="platform/live-lab/evidence/request-ledger-${SESSION_ID}.json"' in wrapper
+    assert '--session-id "$SESSION_ID"' in wrapper
+    assert '--run-id "$RUN_ID"' in wrapper
 
 
 def test_live_lab_analysis_template_targets_the_installed_prometheus_service():
@@ -344,7 +366,7 @@ def test_node_default_can_schedule_documented_eks_request_floor():
 def test_cost_estimator_stays_under_approved_ceiling_and_fails_closed():
     script = LIVE_LAB / "scripts/estimate_session_cost.py"
     result = subprocess.run(
-        ["python3", str(script), "--hours", "3", "--requests", "40000", "--budget", "5.50", "--reserve", "1.00"],
+        ["python3", str(script), "--hours", "3", "--requests", "200000", "--budget", "5.50", "--reserve", "1.00"],
         check=False,
         capture_output=True,
         text=True,
@@ -352,12 +374,12 @@ def test_cost_estimator_stays_under_approved_ceiling_and_fails_closed():
     assert result.returncode == 0, result.stderr
     estimate = json.loads(result.stdout)
     assert estimate["region"] == "ap-northeast-2"
-    assert estimate["base_estimate_usd"] == 4.0594
-    assert estimate["planning_total_usd"] == 5.0594
+    assert estimate["base_estimate_usd"] == 4.1554
+    assert estimate["planning_total_usd"] == 5.1554
     assert estimate["within_budget"] is True
 
     over_budget = subprocess.run(
-        ["python3", str(script), "--hours", "3", "--requests", "40000", "--budget", "4.5", "--reserve", "1.00"],
+        ["python3", str(script), "--hours", "3", "--requests", "200000", "--budget", "4.5", "--reserve", "1.00"],
         check=False,
         capture_output=True,
         text=True,
@@ -429,6 +451,92 @@ def test_rendered_live_rollout_preserves_base_container_and_uses_separate_migrat
     assert migration_env["LIVE_LAB_SYNTHETIC_SEED"] == "true"
 
 
+def test_live_lab_rollout_shutdown_and_alb_drain_are_bounded_and_compatible_with_distroless():
+    rendered = subprocess.run(
+        ["kubectl", "kustomize", str(LIVE_LAB / "manifests" / "app")],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rendered.returncode == 0, rendered.stderr
+    documents = [item for item in yaml.safe_load_all(rendered.stdout) if item]
+    rollout = next(item for item in documents if item.get("kind") == "Rollout")
+    pod_spec = rollout["spec"]["template"]["spec"]
+    container = pod_spec["containers"][0]
+    ingress = next(item for item in documents if item.get("kind") == "Ingress")
+
+    assert pod_spec["terminationGracePeriodSeconds"] == 60
+    assert container["lifecycle"]["preStop"]["exec"]["command"] == [
+        "/usr/bin/python3", "-c", "import time; time.sleep(10)"
+    ]
+    assert ingress["metadata"]["annotations"]["alb.ingress.kubernetes.io/target-group-attributes"] == (
+        "deregistration_delay.timeout_seconds=30"
+    )
+    base_rollout = yaml.safe_load(read("k8s/base/rollout.yaml"))
+    assert "terminationGracePeriodSeconds" not in base_rollout["spec"]["template"]["spec"]
+    assert "lifecycle" not in base_rollout["spec"]["template"]["spec"]["containers"][0]
+
+
+def test_live_lab_canary_analysis_gates_on_external_cloudwatch_metrics():
+    rendered = subprocess.run(
+        ["kubectl", "kustomize", str(LIVE_LAB / "manifests" / "app")],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rendered.returncode == 0, rendered.stderr
+    documents = [item for item in yaml.safe_load_all(rendered.stdout) if item]
+    analysis = next(
+        item for item in documents
+        if item.get("kind") == "AnalysisTemplate" and item.get("metadata", {}).get("name") == "data-pipeline-canary"
+    )
+    metrics = {item["name"]: item for item in analysis["spec"]["metrics"]}
+    assert {
+        "alb-elb-error-rate",
+        "alb-target-error-rate",
+        "alb-target-response-p95",
+    } <= set(metrics)
+    for name in ("alb-elb-error-rate", "alb-target-error-rate"):
+        metric = metrics[name]
+        assert metric["provider"]["cloudWatch"]["interval"] == "5m"
+        assert "len(result[0].Values) >= 3" in metric["successCondition"]
+        assert "FILL(" in str(metric["provider"]["cloudWatch"]["metricDataQueries"])
+    queries = [
+        query
+        for name in metrics
+        if name.startswith("alb-")
+        for query in metrics[name]["provider"]["cloudWatch"]["metricDataQueries"]
+    ]
+    metric_names = [
+        query.get("metricStat", {}).get("metric", {}).get("metricName")
+        for query in queries
+    ]
+    assert "HTTPCode_ELB_5XX_Count" in metric_names
+    assert "HTTPCode_Target_5XX_Count" in metric_names
+    assert "TargetResponseTime" in metric_names
+    assert all("LoadBalancer" in str(query) for query in queries if "metricStat" in query)
+    assert all("TargetGroup" not in str(query) for query in queries if "metricStat" in query)
+    assert "live-lab.aws/alb-name" in read("platform/live-lab/scripts/deploy_live_lab.sh")
+
+
+def test_argo_rollouts_cloudwatch_role_is_minimal_and_bound_to_its_service_account():
+    main = read("platform/live-lab/terraform/main.tf")
+    outputs = read("platform/live-lab/terraform/outputs.tf")
+    bootstrap = read("platform/live-lab/scripts/bootstrap_cluster.sh")
+
+    assert 'resource "aws_iam_policy" "argo_rollouts_cloudwatch"' in main
+    assert re.search(r'Action\s*=\s*"cloudwatch:GetMetricData"', main)
+    assert 'Resource = "*"' in main
+    assert '"aws:RequestedRegion" = var.aws_region' in main
+    assert 'system:serviceaccount:argo-rollouts:argo-rollouts' in main
+    assert "aws_argo_rollouts_cloudwatch_role_arn" in outputs
+    assert 'annotate serviceaccount argo-rollouts' in bootstrap
+    assert '"eks.amazonaws.com/role-arn=$rollouts_role_arn"' in bootstrap
+    assert 'AWS_REGION=$AWS_REGION' in bootstrap
+    assert 'name = "${local.name_prefix}-rollouts-cw"' in main
+    assert len("kyobo-" + "x" * 41 + "-rollouts-cw") <= 64
+
+
 def test_migration_patch_has_full_security_context_not_only_partial_scanner_patch():
     patch = read("platform/live-lab/manifests/app/patches/patch-migration-live-lab.yaml")
 
@@ -454,7 +562,8 @@ def test_runtime_renderer_never_needs_a_local_secret_file_and_renders_session_en
     assert "chmod 600" in renderer
     assert "DB_WRITER_HOST" in renderer and "DB_READER_HOST" in renderer
     assert "ALB_CERTIFICATE_ARN" in renderer
-    assert "WAF_WEB_ACL_ARN" in renderer
+    assert "WAF_WEB_ACL_ARN" not in renderer
+    assert "associate_waf_live.py" in read("platform/live-lab/scripts/deploy_live_lab.sh")
     assert "raffle-secret.yaml" not in renderer
     secret_script = read("platform/live-lab/scripts/create_session_secrets.sh")
     assert "--secret-string file:///dev/stdin" in secret_script
@@ -504,7 +613,6 @@ def test_runtime_renderer_exercises_bootstrap_app_boundary_and_private_output(tm
         "DB_WRITER_HOST": "writer.internal",
         "DB_READER_HOST": "reader.internal",
         "ALB_CERTIFICATE_ARN": "arn:aws:acm:ap-northeast-2:123456789012:certificate/01234567-abcd-0123-abcd-0123456789ab",
-        "WAF_WEB_ACL_ARN": "arn:aws:wafv2:ap-northeast-2:123456789012:regional/webacl/kyobo-lab/01234567-abcd-0123-abcd-0123456789ab",
         "OPERATOR_CIDR": "203.0.113.10/32",
         "SESSION_ID": "kyobo-lab-0001",
         "APPROVAL_ID": "SS0-20260923-test",
@@ -517,7 +625,7 @@ def test_runtime_renderer_exercises_bootstrap_app_boundary_and_private_output(tm
     assert not {"Secret", "Namespace", "Deployment", "Role", "RoleBinding", "ServiceAccount"}.intersection(d["kind"] for d in app if d)
     ingress = next(d for d in app if d and d["kind"] == "Ingress")
     assert ingress["metadata"]["annotations"]["alb.ingress.kubernetes.io/certificate-arn"] == test_env["ALB_CERTIFICATE_ARN"]
-    assert ingress["metadata"]["annotations"]["alb.ingress.kubernetes.io/wafv2-acl-arn"] == test_env["WAF_WEB_ACL_ARN"]
+    assert "alb.ingress.kubernetes.io/wafv2-acl-arn" not in ingress["metadata"]["annotations"]
     assert ingress["metadata"]["annotations"]["alb.ingress.kubernetes.io/tags"].endswith("Session=kyobo-lab-0001,Approval=SS0-20260923-test,ManagedBy=terraform")
     config = next(d for d in yaml.safe_load_all((lab / "evidence/rendered-bootstrap-manifests.yaml").read_text()) if d and d["kind"] == "ConfigMap")
     assert config["data"]["DB_WRITER_HOST"] == "writer.internal"
@@ -611,6 +719,10 @@ def test_teardown_cleans_private_temp_directory_on_failure_and_blocks_unowned_st
 def test_teardown_skips_destroy_plan_when_local_state_file_has_no_resources():
     teardown = read("platform/live-lab/scripts/teardown_live_lab.sh")
 
+    assert 'teardown-${SESSION_ID}-${LIVE_LAB_RUN_ID}-status.json' in teardown
+    assert '${SESSION_ID}-${LIVE_LAB_RUN_ID}-teardown-${TEARDOWN_ATTEMPT_ID}.tfplan' in teardown
+    assert '${SESSION_ID}-${LIVE_LAB_RUN_ID}-residual-inventory.json' in teardown
+    assert 'teardown plan evidence already exists; refusing to overwrite it' in teardown
     assert 'managed_state="$(terraform -chdir="$TERRAFORM_DIR" state list)"' in teardown
     assert 'if [[ -n "$managed_state" ]]; then' in teardown
     assert 'Terraform state is already empty; skip destroy plan.' in teardown
@@ -738,6 +850,7 @@ def test_all_live_aws_scripts_ignore_ambient_static_credentials():
         "prepare_rds_ca_bundle.sh",
         "deploy_live_lab.sh",
         "build_push_image.sh",
+        "apply_session_plan.sh",
         "teardown_live_lab.sh",
         "deadline_watchdog.sh",
     ]
@@ -753,6 +866,12 @@ def test_all_live_aws_scripts_ignore_ambient_static_credentials():
 
 def test_deadline_watchdog_validates_private_session_scope_and_stays_local():
     script = read("platform/live-lab/scripts/deadline_watchdog.sh")
+    assert 'deadline-watchdog-${SESSION_ID}-${LIVE_LAB_RUN_ID}.pid' in script
+    assert 'deadline-watchdog-${SESSION_ID}-${LIVE_LAB_RUN_ID}-status.json' in script
+    assert 'invalid LIVE_LAB_RUN_ID' in script
+    assert "trap 'cleanup_on_signal INT 130' INT" in script
+    assert "trap 'cleanup_on_signal TERM 143' TERM" in script
+    assert 'signal-triggered session-scoped teardown completed' in script
     assert "caffeinate -dimsu" in script
     assert "AWS cleanup retries exhausted" in script or "deadline cleanup retries exhausted" in script
     assert '"$tfvars_mode" == 600' in script
@@ -760,10 +879,133 @@ def test_deadline_watchdog_validates_private_session_scope_and_stays_local():
     assert 'watchdog_pid="$$"' in script
     assert "Keep this managed terminal session alive." in script
     assert "trap on_exit EXIT" in script
-    assert "trap 'exit 143' TERM" in script
+    assert "trap 'cleanup_on_signal TERM 143' TERM" in script
     assert "nohup" not in script
     assert "if bash platform/live-lab/scripts/teardown_live_lab.sh; then" in script
     assert "AWS hard spending limit" not in script
+
+
+def test_live_lab_provisioning_apply_is_bound_to_the_validated_saved_plan():
+    wrapper = read("platform/live-lab/scripts/apply_session_plan.sh")
+    watchdog = read("platform/live-lab/scripts/deadline_watchdog.sh")
+    teardown = read("platform/live-lab/scripts/teardown_live_lab.sh")
+    for script in (wrapper, watchdog, teardown):
+        assert script.index("stat -c '%a'") < script.index("stat -f '%Lp'")
+
+    plan_at = wrapper.index('terraform -chdir="$terraform_dir" plan')
+    show_at = wrapper.index('terraform -chdir="$terraform_dir" show -json "$plan_file"')
+    validate_at = wrapper.index('scripts/validate_session_plan.py')
+    apply_at = wrapper.index('terraform -chdir="$terraform_dir" apply')
+    assert plan_at < show_at < validate_at < apply_at
+    assert 'apply -input=false -auto-approve "$plan_file"' in wrapper
+    assert 'estimate_session_cost.py' in wrapper
+    assert 'workspace="$(terraform -chdir="$terraform_dir" workspace show)"' in wrapper
+    assert 'live-lab Terraform must use the default workspace' in wrapper
+    assert 'chmod 600 "$plan_file"' in wrapper
+    assert 'chmod 600 "$plan_json"' in wrapper
+
+    script_dir = LIVE_LAB / "scripts"
+    direct_apply_paths = set()
+    for path in script_dir.glob("*"):
+        if path.suffix not in {".sh", ".py"} or path.name == "apply_session_plan.sh":
+            continue
+        source = path.read_text(encoding="utf-8")
+        if re.search(r"(?m)^\s*terraform\s+-chdir=[^\s]+\s+apply\b", source):
+            if path.name != "teardown_live_lab.sh":
+                direct_apply_paths.add(path.name)
+    assert not direct_apply_paths, f"provisioning apply bypasses the validated wrapper: {direct_apply_paths}"
+
+    readme = read("README.md")
+    assert "apply_session_plan.sh" in readme
+    assert "`terraform apply`를 직접 실행하지 말고" in readme
+
+
+def test_live_lab_apply_wrapper_never_applies_a_rejected_plan(tmp_path):
+    evidence_dir = LIVE_LAB / "evidence"
+    evidence_existed = evidence_dir.exists()
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    session_id = f"live-apply-{os.getpid()}"
+    approval_id = "SS0-20261004-test-apply-wrapper"
+    plan_id = f"test-{os.getpid()}"
+    tfvars_path = evidence_dir / f"{session_id}.auto.tfvars.json"
+    plan_file = evidence_dir / f"{session_id}-validated-{plan_id}.tfplan"
+    plan_json = evidence_dir / f"{session_id}-validated-{plan_id}.plan.json"
+    calls_path = tmp_path / "terraform-calls.jsonl"
+    stat_calls_path = tmp_path / "stat-calls.jsonl"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    aws_stub = bin_dir / "aws"
+    terraform_stub = bin_dir / "terraform"
+    stat_stub = bin_dir / "stat"
+    aws_stub.write_text("#!/usr/bin/env python3\nprint('123456789012')\n", encoding="utf-8")
+    terraform_stub.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, sys\n"
+        "from pathlib import Path\n"
+        "args = sys.argv[1:]\n"
+        "with open(os.environ['MOCK_TERRAFORM_CALLS'], 'a', encoding='utf-8') as out:\n"
+        "    out.write(json.dumps(args) + '\\n')\n"
+        "if args[1] == 'workspace' and args[2] == 'show':\n"
+        "    print('default')\n"
+        "elif args[1] == 'plan':\n"
+        "    Path(next(arg[5:] for arg in args if arg.startswith('-out='))).write_text('mock plan')\n"
+        "elif args[1] == 'show':\n"
+        "    print(json.dumps({'format_version':'1.2','errored':True,'applyable':False,'complete':False}))\n",
+        encoding="utf-8",
+    )
+    stat_stub.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, sys\n"
+        "with open(os.environ['MOCK_STAT_CALLS'], 'a', encoding='utf-8') as out:\n"
+        "    out.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "if sys.argv[1:3] == ['-c', '%a']:\n"
+        "    print('600')\n"
+        "else:\n"
+        "    raise SystemExit(1)\n",
+        encoding="utf-8",
+    )
+    aws_stub.chmod(0o700)
+    terraform_stub.chmod(0o700)
+    stat_stub.chmod(0o700)
+    tfvars_path.write_text(json.dumps({
+        "aws_account_id": "123456789012",
+        "aws_region": "ap-northeast-2",
+        "session_id": session_id,
+        "approval_id": approval_id,
+        "cost_budget_usd": 5.5,
+        "max_session_hours": 3,
+    }), encoding="utf-8")
+    tfvars_path.chmod(0o600)
+    env = os.environ.copy()
+    env.update({
+        "AWS_PROFILE": "mock-profile",
+        "AWS_REGION": "ap-northeast-2",
+        "LIVE_LAB_TFVARS": str(tfvars_path),
+        "LIVE_LAB_PLAN_RUN_ID": plan_id,
+        "MOCK_TERRAFORM_CALLS": str(calls_path),
+        "MOCK_STAT_CALLS": str(stat_calls_path),
+        "PATH": f"{bin_dir}:{env['PATH']}",
+    })
+    try:
+        result = subprocess.run(
+            ["bash", str(LIVE_LAB / "scripts/apply_session_plan.sh")],
+            cwd=REPO_ROOT, env=env, check=False, capture_output=True, text=True,
+        )
+        assert result.returncode == 2
+        assert "Terraform plan is errored" in result.stderr
+        stat_calls = [json.loads(line) for line in stat_calls_path.read_text(encoding="utf-8").splitlines()]
+        assert stat_calls[0][:2] == ["-c", "%a"]
+        calls = [json.loads(line) for line in calls_path.read_text(encoding="utf-8").splitlines()]
+        assert [call[1] for call in calls] == ["workspace", "plan", "show"]
+        assert not plan_file.is_symlink()
+        assert stat.S_IMODE(plan_file.stat().st_mode) == 0o600
+        assert stat.S_IMODE(plan_json.stat().st_mode) == 0o600
+    finally:
+        tfvars_path.unlink(missing_ok=True)
+        plan_file.unlink(missing_ok=True)
+        plan_json.unlink(missing_ok=True)
+        if not evidence_existed:
+            evidence_dir.rmdir()
 
 
 def test_argo_rollouts_large_crds_use_server_side_apply():
@@ -801,6 +1043,14 @@ def test_plan_validator_rejects_cost_shape_drift_before_apply(tmp_path):
         {"address": "aws_wafv2_web_acl.lab", "mode": "managed", "type": "aws_wafv2_web_acl", "values": {"tags_all": tags}},
         {"address": "aws_ecr_repository.app", "mode": "managed", "type": "aws_ecr_repository", "values": {"tags_all": tags}},
     ]
+    session_role_name = f"kyobo-{session}-eks-cluster"
+    resources.extend([
+        {"address": "aws_route_table.public", "mode": "managed", "type": "aws_route_table", "values": {"id": "rtb-session", "vpc_id": "vpc-session", "tags_all": tags}},
+        {"address": "aws_subnet.public[0]", "mode": "managed", "type": "aws_subnet", "values": {"id": "subnet-session", "vpc_id": "vpc-session", "tags_all": tags}},
+        {"address": "aws_iam_role.eks_cluster", "mode": "managed", "type": "aws_iam_role", "values": {"name": session_role_name, "id": session_role_name, "tags_all": tags}},
+        {"address": "aws_iam_role_policy_attachment.eks_cluster", "mode": "managed", "type": "aws_iam_role_policy_attachment", "values": {"id": f"{session_role_name}-policy", "role": session_role_name, "policy_arn": "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"}},
+        {"address": "aws_route_table_association.public[0]", "mode": "managed", "type": "aws_route_table_association", "values": {"id": "rtbassoc-session", "route_table_id": "rtb-session", "subnet_id": "subnet-session"}},
+    ])
     variables = {
         "aws_account_id": "123456789012",
         "aws_region": "ap-northeast-2",
@@ -815,14 +1065,28 @@ def test_plan_validator_rejects_cost_shape_drift_before_apply(tmp_path):
         "eks_node_max_size": 2,
     }
     plan = {
+        "format_version": "1.2",
+        "errored": False,
+        "applyable": True,
+        "complete": True,
         "variables": {key: {"value": value} for key, value in variables.items()},
         "planned_values": {"root_module": {"resources": resources}},
-        "resource_changes": [{"address": item["address"], "change": {"actions": ["create"]}} for item in resources],
+        "resource_changes": [{"address": item["address"], "mode": item["mode"], "type": item["type"], "change": {"actions": ["create"]}} for item in resources],
         "configuration": {"root_module": {"resources": [{
             "address": "aws_db_instance.mysql_reader",
             "expressions": {"replicate_source_db": {"references": ["aws_db_instance.mysql_primary.arn"]}},
         }]}},
     }
+    plan_values = {item["address"]: item["values"] for item in resources}
+    for address in (
+        "aws_route_table.public",
+        "aws_subnet.public[0]",
+        "aws_iam_role.eks_cluster",
+        "aws_iam_role_policy_attachment.eks_cluster",
+        "aws_route_table_association.public[0]",
+    ):
+        resource_change = next(item for item in plan["resource_changes"] if item["address"] == address)
+        resource_change["change"] = {"actions": ["no-op"], "before": plan_values[address], "after": plan_values[address]}
     resources[1]["values"]["disk_size"] = 20
     resources[2]["values"].update(engine="mysql", engine_version="8.4")
     for db in resources[2:4]:
@@ -835,7 +1099,50 @@ def test_plan_validator_rejects_cost_shape_drift_before_apply(tmp_path):
     ]
     valid = subprocess.run(command, check=False, capture_output=True, text=True)
     assert valid.returncode == 0, valid.stderr
-    assert "Validated 6 AWS plan resources" in valid.stdout
+    assert "Validated 11 AWS plan resources" in valid.stdout
+
+    resumed_plan = json.loads(json.dumps(plan))
+    existing_eks = resumed_plan["planned_values"]["root_module"]["resources"][0]["values"]
+    resumed_plan["resource_changes"][0]["change"] = {
+        "actions": ["no-op"],
+        "before": existing_eks,
+        "after": existing_eks,
+    }
+    plan_file.write_text(json.dumps(resumed_plan), encoding="utf-8")
+    resumed = subprocess.run(command, check=False, capture_output=True, text=True)
+    assert resumed.returncode == 0, resumed.stderr
+
+    unowned_plan = json.loads(json.dumps(resumed_plan))
+    unowned_values = unowned_plan["planned_values"]["root_module"]["resources"][0]["values"]
+    unowned_values["tags_all"]["Session"] = "another-session"
+    unowned_change = unowned_plan["resource_changes"][0]["change"]
+    unowned_change["before"] = unowned_values
+    unowned_change["after"] = unowned_values
+    plan_file.write_text(json.dumps(unowned_plan), encoding="utf-8")
+    blocked_unowned = subprocess.run(command, check=False, capture_output=True, text=True)
+    assert blocked_unowned.returncode == 2
+    assert "planned resource tag mismatch" in blocked_unowned.stderr
+
+    for actions in (["update"], ["delete"], ["create", "delete"]):
+        invalid_actions = json.loads(json.dumps(resumed_plan))
+        invalid_actions["resource_changes"][0]["change"]["actions"] = actions
+        plan_file.write_text(json.dumps(invalid_actions), encoding="utf-8")
+        blocked_actions = subprocess.run(command, check=False, capture_output=True, text=True)
+        assert blocked_actions.returncode == 2
+        assert "plan contains AWS actions other than create/no-op" in blocked_actions.stderr
+
+    for key, invalid_value, expected_error in [
+        ("errored", True, "Terraform plan is errored"),
+        ("applyable", False, "Terraform plan is not applyable"),
+        ("complete", False, "Terraform plan is incomplete"),
+    ]:
+        original = plan[key]
+        plan[key] = invalid_value
+        plan_file.write_text(json.dumps(plan), encoding="utf-8")
+        blocked_plan = subprocess.run(command, check=False, capture_output=True, text=True)
+        assert blocked_plan.returncode == 2
+        assert expected_error in blocked_plan.stderr
+        plan[key] = original
 
     for index, key, bad in [(1, "disk_size", 50), (2, "engine_version", "8.0"),
                              (2, "engine_lifecycle_support", "open-source-rds-extended-support"),

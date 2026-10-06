@@ -94,7 +94,8 @@ jobs:
           cache: true
       - name: Fail on fixable high or critical image vulnerabilities
         run: >-
-          trivy image --ignorefile .trivyignore --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL
+          trivy image --ignorefile .trivyignore --vex .security/vex/live-lab-openssl.openvex.json
+          --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL
           --scanners vuln data-pipeline-app:security
       - name: Verify ignored base SBOM packages are absent at runtime
         run: >-
