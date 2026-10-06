@@ -11,6 +11,7 @@ images:
     newTag: e426d8db675e62e9ac55b5ba6ab913e05114b767
     digest: sha256:7a317a9de5b7d4c839c80f4b764242b2abb4a743a48018c633472d59ee93f158
 patches:
+  - path: patch-hpa.yaml
   - target:
       group: argoproj.io
       version: v1alpha1
