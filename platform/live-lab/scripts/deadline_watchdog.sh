@@ -9,18 +9,20 @@ cd "$repo_root"
 : "${EXPECTED_ACCOUNT_ID:?EXPECTED_ACCOUNT_ID is required}"
 : "${SESSION_ID:?SESSION_ID is required}"
 : "${APPROVAL_ID:?APPROVAL_ID is required}"
+: "${LIVE_LAB_RUN_ID:=$SESSION_ID}"
 : "${KUBE_CONTEXT:?KUBE_CONTEXT must identify this session cluster}"
 : "${LIVE_LAB_TFVARS:?LIVE_LAB_TFVARS must point to the protected session tfvars file}"
 : "${SESSION_DEADLINE_EPOCH:?SESSION_DEADLINE_EPOCH is required}"
 
 EVIDENCE_DIR="platform/live-lab/evidence"
-PID_FILE="$EVIDENCE_DIR/deadline-watchdog.pid"
-LOG_FILE="$EVIDENCE_DIR/deadline-watchdog.log"
-STATUS_FILE="$EVIDENCE_DIR/deadline-watchdog-status.json"
+PID_FILE="$EVIDENCE_DIR/deadline-watchdog-${SESSION_ID}-${LIVE_LAB_RUN_ID}.pid"
+LOG_FILE="$EVIDENCE_DIR/deadline-watchdog-${SESSION_ID}-${LIVE_LAB_RUN_ID}.log"
+STATUS_FILE="$EVIDENCE_DIR/deadline-watchdog-${SESSION_ID}-${LIVE_LAB_RUN_ID}-status.json"
 MODE="${1:-start}"
 [[ "$MODE" == start || "$MODE" == --wait ]] || { echo "Usage: deadline_watchdog.sh [start|--wait]" >&2; exit 2; }
 [[ "$AWS_REGION" == ap-northeast-2 && "$EXPECTED_ACCOUNT_ID" =~ ^[0-9]{12}$ ]] || { echo "BLOCKED: account/region mismatch." >&2; exit 2; }
 [[ "$SESSION_ID" =~ ^[a-z0-9][a-z0-9-]{5,40}$ && "$APPROVAL_ID" =~ ^SS0-[0-9]{8}-[A-Za-z0-9._-]{3,64}$ ]] || { echo "BLOCKED: invalid session or approval ID." >&2; exit 2; }
+[[ "$LIVE_LAB_RUN_ID" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,64}$ ]] || { echo "BLOCKED: invalid LIVE_LAB_RUN_ID." >&2; exit 2; }
 [[ "$SESSION_DEADLINE_EPOCH" =~ ^[0-9]{10}$ ]] || { echo "BLOCKED: deadline must be a Unix epoch in seconds." >&2; exit 2; }
 now="$(date +%s)"
 remaining=$((SESSION_DEADLINE_EPOCH - now))
@@ -73,14 +75,32 @@ caffeinate_pid=$!
 on_exit() {
   kill "$caffeinate_pid" 2>/dev/null || true
 }
+cleanup_on_signal() {
+  local signal_name="$1"
+  local exit_code="$2"
+  trap - INT TERM
+  export LIVE_LAB_RUN_ID
+  export TEARDOWN_CONFIRM="destroy-${SESSION_ID}-${AWS_REGION}"
+  echo "Received $signal_name; immediately starting session-scoped teardown." >&2
+  if bash platform/live-lab/scripts/teardown_live_lab.sh; then
+    python3 platform/live-lab/scripts/live_lab_lifecycle.py write-status "$STATUS_FILE" completed \
+      "signal-triggered session-scoped teardown completed" --session "$SESSION_ID" --region "$AWS_REGION"
+  else
+    python3 platform/live-lab/scripts/live_lab_lifecycle.py write-status "$STATUS_FILE" incomplete \
+      "signal-triggered teardown failed; AWS charges may continue" --session "$SESSION_ID" --region "$AWS_REGION" || true
+    echo "CRITICAL: signal-triggered cleanup failed; inspect AWS residuals immediately." >&2
+  fi
+  exit "$exit_code"
+}
 trap on_exit EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+trap 'cleanup_on_signal INT 130' INT
+trap 'cleanup_on_signal TERM 143' TERM
 while (( $(date +%s) < SESSION_DEADLINE_EPOCH )); do
   sleep 30
 done
 
 export TEARDOWN_CONFIRM="destroy-${SESSION_ID}-${AWS_REGION}"
+export LIVE_LAB_RUN_ID
 retry_deadline=$((SESSION_DEADLINE_EPOCH + 3600))
 while (( $(date +%s) < retry_deadline )); do
   if bash platform/live-lab/scripts/teardown_live_lab.sh; then

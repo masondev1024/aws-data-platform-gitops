@@ -89,6 +89,8 @@ EKS API는 기본적으로 private endpoint이며, 로컬에서 Terraform/Helm b
 
 테스트 비용을 줄이기 위해 기본값은 EKS worker 1대(`t3.medium`), NAT Gateway 1개, RDS primary-only·Single-AZ로 조정했습니다. 고가용성 검증이 필요한 경우에만 `enable_multi_az_nat=true`, `enable_rds_replica=true`, `enable_rds_multi_az=true`, node 수 증가를 별도로 선택합니다. RDS Multi-AZ는 동기 standby와 failover drill을 위한 명시적 비용 선택이며, 전체 선택 근거와 실제 측정값은 로컬 전용 engineering notes에 기록합니다.
 
+`platform/live-lab`의 승인된 실환경 세션은 `prepare_session.sh`로 세션 입력을 만들고, Secret을 승인·생성한 뒤 `apply_session_plan.sh`만 사용합니다. 이 진입점이 비용을 먼저 확인하고 Terraform plan을 만든 다음, JSON plan의 실행 가능 상태·계정·리전·비용·리소스 모양을 검사한 후 **검사한 동일한 저장 plan**만 적용합니다. plan과 JSON 증거는 권한 `0600`으로 로컬 전용 `platform/live-lab/evidence/`에 보관합니다. 재실행 때는 `LIVE_LAB_RUN_ID`로 watchdog·teardown 결과를 분리하지만, 요청 원장은 Terraform `SESSION_ID` 기준이라 같은 세션의 재시도 요청도 200,000건 한도에 누적됩니다. 정리 plan도 시도별 파일로 보존하며 watchdog가 신호로 중단되면 즉시 범위 한정 정리를 시도합니다. 이 경로에서는 `terraform apply`를 직접 실행하지 말고 정리에는 `teardown_live_lab.sh`를 사용합니다.
+
 ## 배포 전 조건
 
 배포 namespace에는 다음 ConfigMap과 Secret을 먼저 준비합니다. 운영 overlay도 RDS 인증서를 검증하며, 관리 계정은 마이그레이션 Job에만 전달합니다.

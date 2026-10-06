@@ -159,6 +159,14 @@ def test_synchronized_refresh_profile_is_one_bounded_request_per_virtual_user():
     assert '"REFRESH_VUS=10000"' in wrapper
 
 
+def test_live_lab_k6_request_ledger_stays_session_wide_across_execution_retries():
+    wrapper = read("scripts/run_live_lab_k6.sh")
+
+    assert 'LEDGER_PATH="platform/live-lab/evidence/request-ledger-${SESSION_ID}.json"' in wrapper
+    assert '--session-id "$SESSION_ID"' in wrapper
+    assert '--run-id "$RUN_ID"' in wrapper
+
+
 def test_live_lab_analysis_template_targets_the_installed_prometheus_service():
     kustomization = yaml.safe_load(read("platform/live-lab/manifests/app/kustomization.yaml"))
     patch_path = "patches/patch-analysis-template-prometheus-url.yaml"
@@ -711,6 +719,10 @@ def test_teardown_cleans_private_temp_directory_on_failure_and_blocks_unowned_st
 def test_teardown_skips_destroy_plan_when_local_state_file_has_no_resources():
     teardown = read("platform/live-lab/scripts/teardown_live_lab.sh")
 
+    assert 'teardown-${SESSION_ID}-${LIVE_LAB_RUN_ID}-status.json' in teardown
+    assert '${SESSION_ID}-${LIVE_LAB_RUN_ID}-teardown-${TEARDOWN_ATTEMPT_ID}.tfplan' in teardown
+    assert '${SESSION_ID}-${LIVE_LAB_RUN_ID}-residual-inventory.json' in teardown
+    assert 'teardown plan evidence already exists; refusing to overwrite it' in teardown
     assert 'managed_state="$(terraform -chdir="$TERRAFORM_DIR" state list)"' in teardown
     assert 'if [[ -n "$managed_state" ]]; then' in teardown
     assert 'Terraform state is already empty; skip destroy plan.' in teardown
@@ -838,6 +850,7 @@ def test_all_live_aws_scripts_ignore_ambient_static_credentials():
         "prepare_rds_ca_bundle.sh",
         "deploy_live_lab.sh",
         "build_push_image.sh",
+        "apply_session_plan.sh",
         "teardown_live_lab.sh",
         "deadline_watchdog.sh",
     ]
@@ -853,6 +866,12 @@ def test_all_live_aws_scripts_ignore_ambient_static_credentials():
 
 def test_deadline_watchdog_validates_private_session_scope_and_stays_local():
     script = read("platform/live-lab/scripts/deadline_watchdog.sh")
+    assert 'deadline-watchdog-${SESSION_ID}-${LIVE_LAB_RUN_ID}.pid' in script
+    assert 'deadline-watchdog-${SESSION_ID}-${LIVE_LAB_RUN_ID}-status.json' in script
+    assert 'invalid LIVE_LAB_RUN_ID' in script
+    assert "trap 'cleanup_on_signal INT 130' INT" in script
+    assert "trap 'cleanup_on_signal TERM 143' TERM" in script
+    assert 'signal-triggered session-scoped teardown completed' in script
     assert "caffeinate -dimsu" in script
     assert "AWS cleanup retries exhausted" in script or "deadline cleanup retries exhausted" in script
     assert '"$tfvars_mode" == 600' in script
@@ -860,10 +879,111 @@ def test_deadline_watchdog_validates_private_session_scope_and_stays_local():
     assert 'watchdog_pid="$$"' in script
     assert "Keep this managed terminal session alive." in script
     assert "trap on_exit EXIT" in script
-    assert "trap 'exit 143' TERM" in script
+    assert "trap 'cleanup_on_signal TERM 143' TERM" in script
     assert "nohup" not in script
     assert "if bash platform/live-lab/scripts/teardown_live_lab.sh; then" in script
     assert "AWS hard spending limit" not in script
+
+
+def test_live_lab_provisioning_apply_is_bound_to_the_validated_saved_plan():
+    wrapper = read("platform/live-lab/scripts/apply_session_plan.sh")
+    plan_at = wrapper.index('terraform -chdir="$terraform_dir" plan')
+    show_at = wrapper.index('terraform -chdir="$terraform_dir" show -json "$plan_file"')
+    validate_at = wrapper.index('scripts/validate_session_plan.py')
+    apply_at = wrapper.index('terraform -chdir="$terraform_dir" apply')
+    assert plan_at < show_at < validate_at < apply_at
+    assert 'apply -input=false -auto-approve "$plan_file"' in wrapper
+    assert 'estimate_session_cost.py' in wrapper
+    assert 'workspace="$(terraform -chdir="$terraform_dir" workspace show)"' in wrapper
+    assert 'live-lab Terraform must use the default workspace' in wrapper
+    assert 'chmod 600 "$plan_file"' in wrapper
+    assert 'chmod 600 "$plan_json"' in wrapper
+
+    script_dir = LIVE_LAB / "scripts"
+    direct_apply_paths = set()
+    for path in script_dir.glob("*"):
+        if path.suffix not in {".sh", ".py"} or path.name == "apply_session_plan.sh":
+            continue
+        source = path.read_text(encoding="utf-8")
+        if re.search(r"(?m)^\s*terraform\s+-chdir=[^\s]+\s+apply\b", source):
+            if path.name != "teardown_live_lab.sh":
+                direct_apply_paths.add(path.name)
+    assert not direct_apply_paths, f"provisioning apply bypasses the validated wrapper: {direct_apply_paths}"
+
+    readme = read("README.md")
+    assert "apply_session_plan.sh" in readme
+    assert "`terraform apply`를 직접 실행하지 말고" in readme
+
+
+def test_live_lab_apply_wrapper_never_applies_a_rejected_plan(tmp_path):
+    evidence_dir = LIVE_LAB / "evidence"
+    evidence_existed = evidence_dir.exists()
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    session_id = f"live-apply-{os.getpid()}"
+    approval_id = "SS0-20261004-test-apply-wrapper"
+    plan_id = f"test-{os.getpid()}"
+    tfvars_path = evidence_dir / f"{session_id}.auto.tfvars.json"
+    plan_file = evidence_dir / f"{session_id}-validated-{plan_id}.tfplan"
+    plan_json = evidence_dir / f"{session_id}-validated-{plan_id}.plan.json"
+    calls_path = tmp_path / "terraform-calls.jsonl"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    aws_stub = bin_dir / "aws"
+    terraform_stub = bin_dir / "terraform"
+    aws_stub.write_text("#!/usr/bin/env python3\nprint('123456789012')\n", encoding="utf-8")
+    terraform_stub.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, sys\n"
+        "from pathlib import Path\n"
+        "args = sys.argv[1:]\n"
+        "with open(os.environ['MOCK_TERRAFORM_CALLS'], 'a', encoding='utf-8') as out:\n"
+        "    out.write(json.dumps(args) + '\\n')\n"
+        "if args[1] == 'workspace' and args[2] == 'show':\n"
+        "    print('default')\n"
+        "elif args[1] == 'plan':\n"
+        "    Path(next(arg[5:] for arg in args if arg.startswith('-out='))).write_text('mock plan')\n"
+        "elif args[1] == 'show':\n"
+        "    print(json.dumps({'format_version':'1.2','errored':True,'applyable':False,'complete':False}))\n",
+        encoding="utf-8",
+    )
+    aws_stub.chmod(0o700)
+    terraform_stub.chmod(0o700)
+    tfvars_path.write_text(json.dumps({
+        "aws_account_id": "123456789012",
+        "aws_region": "ap-northeast-2",
+        "session_id": session_id,
+        "approval_id": approval_id,
+        "cost_budget_usd": 5.5,
+        "max_session_hours": 3,
+    }), encoding="utf-8")
+    tfvars_path.chmod(0o600)
+    env = os.environ.copy()
+    env.update({
+        "AWS_PROFILE": "mock-profile",
+        "AWS_REGION": "ap-northeast-2",
+        "LIVE_LAB_TFVARS": str(tfvars_path),
+        "LIVE_LAB_PLAN_RUN_ID": plan_id,
+        "MOCK_TERRAFORM_CALLS": str(calls_path),
+        "PATH": f"{bin_dir}:{env['PATH']}",
+    })
+    try:
+        result = subprocess.run(
+            ["bash", str(LIVE_LAB / "scripts/apply_session_plan.sh")],
+            cwd=REPO_ROOT, env=env, check=False, capture_output=True, text=True,
+        )
+        assert result.returncode == 2
+        assert "Terraform plan is errored" in result.stderr
+        calls = [json.loads(line) for line in calls_path.read_text(encoding="utf-8").splitlines()]
+        assert [call[1] for call in calls] == ["workspace", "plan", "show"]
+        assert not plan_file.is_symlink()
+        assert stat.S_IMODE(plan_file.stat().st_mode) == 0o600
+        assert stat.S_IMODE(plan_json.stat().st_mode) == 0o600
+    finally:
+        tfvars_path.unlink(missing_ok=True)
+        plan_file.unlink(missing_ok=True)
+        plan_json.unlink(missing_ok=True)
+        if not evidence_existed:
+            evidence_dir.rmdir()
 
 
 def test_argo_rollouts_large_crds_use_server_side_apply():
@@ -901,6 +1021,14 @@ def test_plan_validator_rejects_cost_shape_drift_before_apply(tmp_path):
         {"address": "aws_wafv2_web_acl.lab", "mode": "managed", "type": "aws_wafv2_web_acl", "values": {"tags_all": tags}},
         {"address": "aws_ecr_repository.app", "mode": "managed", "type": "aws_ecr_repository", "values": {"tags_all": tags}},
     ]
+    session_role_name = f"kyobo-{session}-eks-cluster"
+    resources.extend([
+        {"address": "aws_route_table.public", "mode": "managed", "type": "aws_route_table", "values": {"id": "rtb-session", "vpc_id": "vpc-session", "tags_all": tags}},
+        {"address": "aws_subnet.public[0]", "mode": "managed", "type": "aws_subnet", "values": {"id": "subnet-session", "vpc_id": "vpc-session", "tags_all": tags}},
+        {"address": "aws_iam_role.eks_cluster", "mode": "managed", "type": "aws_iam_role", "values": {"name": session_role_name, "id": session_role_name, "tags_all": tags}},
+        {"address": "aws_iam_role_policy_attachment.eks_cluster", "mode": "managed", "type": "aws_iam_role_policy_attachment", "values": {"id": f"{session_role_name}-policy", "role": session_role_name, "policy_arn": "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"}},
+        {"address": "aws_route_table_association.public[0]", "mode": "managed", "type": "aws_route_table_association", "values": {"id": "rtbassoc-session", "route_table_id": "rtb-session", "subnet_id": "subnet-session"}},
+    ])
     variables = {
         "aws_account_id": "123456789012",
         "aws_region": "ap-northeast-2",
@@ -921,12 +1049,22 @@ def test_plan_validator_rejects_cost_shape_drift_before_apply(tmp_path):
         "complete": True,
         "variables": {key: {"value": value} for key, value in variables.items()},
         "planned_values": {"root_module": {"resources": resources}},
-        "resource_changes": [{"address": item["address"], "change": {"actions": ["create"]}} for item in resources],
+        "resource_changes": [{"address": item["address"], "mode": item["mode"], "type": item["type"], "change": {"actions": ["create"]}} for item in resources],
         "configuration": {"root_module": {"resources": [{
             "address": "aws_db_instance.mysql_reader",
             "expressions": {"replicate_source_db": {"references": ["aws_db_instance.mysql_primary.arn"]}},
         }]}},
     }
+    plan_values = {item["address"]: item["values"] for item in resources}
+    for address in (
+        "aws_route_table.public",
+        "aws_subnet.public[0]",
+        "aws_iam_role.eks_cluster",
+        "aws_iam_role_policy_attachment.eks_cluster",
+        "aws_route_table_association.public[0]",
+    ):
+        resource_change = next(item for item in plan["resource_changes"] if item["address"] == address)
+        resource_change["change"] = {"actions": ["no-op"], "before": plan_values[address], "after": plan_values[address]}
     resources[1]["values"]["disk_size"] = 20
     resources[2]["values"].update(engine="mysql", engine_version="8.4")
     for db in resources[2:4]:
@@ -939,7 +1077,37 @@ def test_plan_validator_rejects_cost_shape_drift_before_apply(tmp_path):
     ]
     valid = subprocess.run(command, check=False, capture_output=True, text=True)
     assert valid.returncode == 0, valid.stderr
-    assert "Validated 6 AWS plan resources" in valid.stdout
+    assert "Validated 11 AWS plan resources" in valid.stdout
+
+    resumed_plan = json.loads(json.dumps(plan))
+    existing_eks = resumed_plan["planned_values"]["root_module"]["resources"][0]["values"]
+    resumed_plan["resource_changes"][0]["change"] = {
+        "actions": ["no-op"],
+        "before": existing_eks,
+        "after": existing_eks,
+    }
+    plan_file.write_text(json.dumps(resumed_plan), encoding="utf-8")
+    resumed = subprocess.run(command, check=False, capture_output=True, text=True)
+    assert resumed.returncode == 0, resumed.stderr
+
+    unowned_plan = json.loads(json.dumps(resumed_plan))
+    unowned_values = unowned_plan["planned_values"]["root_module"]["resources"][0]["values"]
+    unowned_values["tags_all"]["Session"] = "another-session"
+    unowned_change = unowned_plan["resource_changes"][0]["change"]
+    unowned_change["before"] = unowned_values
+    unowned_change["after"] = unowned_values
+    plan_file.write_text(json.dumps(unowned_plan), encoding="utf-8")
+    blocked_unowned = subprocess.run(command, check=False, capture_output=True, text=True)
+    assert blocked_unowned.returncode == 2
+    assert "planned resource tag mismatch" in blocked_unowned.stderr
+
+    for actions in (["update"], ["delete"], ["create", "delete"]):
+        invalid_actions = json.loads(json.dumps(resumed_plan))
+        invalid_actions["resource_changes"][0]["change"]["actions"] = actions
+        plan_file.write_text(json.dumps(invalid_actions), encoding="utf-8")
+        blocked_actions = subprocess.run(command, check=False, capture_output=True, text=True)
+        assert blocked_actions.returncode == 2
+        assert "plan contains AWS actions other than create/no-op" in blocked_actions.stderr
 
     for key, invalid_value, expected_error in [
         ("errored", True, "Terraform plan is errored"),

@@ -11,7 +11,7 @@ apply_vus="${APPLY_VUS:-10}"
 SESSION_ID="${SESSION_ID:-$(terraform -chdir=platform/live-lab/terraform output -raw session_id 2>/dev/null || true)}"
 RUN_ID="${RUN_ID:-k6-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
 SUMMARY_PATH="platform/live-lab/evidence/k6-${RUN_ID}.json"
-LEDGER_PATH="platform/live-lab/evidence/request-ledger.json"
+LEDGER_PATH="platform/live-lab/evidence/request-ledger-${SESSION_ID}.json"
 K6_BIN="${K6_BIN:-k6}"
 
 if [[ ! "$BASE_URL" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
