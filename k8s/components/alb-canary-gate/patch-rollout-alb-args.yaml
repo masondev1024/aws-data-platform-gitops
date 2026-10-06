@@ -13,6 +13,20 @@
       fieldRef:
         fieldPath: metadata.labels['live-lab.aws/alb-id']
 - op: add
+  path: /spec/strategy/canary/steps/2/analysis/args/-
+  value:
+    name: canary-tg-name
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.labels['live-lab.aws/canary-tg-name']
+- op: add
+  path: /spec/strategy/canary/steps/2/analysis/args/-
+  value:
+    name: canary-tg-id
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.labels['live-lab.aws/canary-tg-id']
+- op: add
   path: /spec/strategy/canary/steps/5/analysis/args/-
   value:
     name: alb-name
@@ -26,3 +40,17 @@
     valueFrom:
       fieldRef:
         fieldPath: metadata.labels['live-lab.aws/alb-id']
+- op: add
+  path: /spec/strategy/canary/steps/5/analysis/args/-
+  value:
+    name: canary-tg-name
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.labels['live-lab.aws/canary-tg-name']
+- op: add
+  path: /spec/strategy/canary/steps/5/analysis/args/-
+  value:
+    name: canary-tg-id
+    valueFrom:
+      fieldRef:
+        fieldPath: metadata.labels['live-lab.aws/canary-tg-id']
