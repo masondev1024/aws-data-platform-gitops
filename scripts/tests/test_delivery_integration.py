@@ -27,9 +27,11 @@ def test_dev_and_main_are_checked_without_publishing_from_dev():
             assert workflow["on"][event]["branches"] == ["dev", "main"]
     cd = yaml.load((ROOT / ".github/workflows/cd.yaml").read_text(), Loader=yaml.BaseLoader)
     assert cd["on"]["push"]["branches"] == ["main"]
-    # A manual dispatch may select another branch; the publishing job must
-    # reject it before credentials, build, or registry writes are available.
-    assert cd["jobs"]["publish"]["if"] == "github.ref == 'refs/heads/main'"
+    # Manual dispatch on another branch, or a deprovisioned environment,
+    # cannot reach credentials, build, or registry writes.
+    assert cd["jobs"]["publish"]["if"] == (
+        "${{ github.ref == 'refs/heads/main' && vars.CD_PUBLISH_ENABLED == 'true' }}"
+    )
     # Terraform's separate cloud-mutating trigger must not be widened to dev.
     infra = yaml.load((ROOT / ".github/workflows/infra.yaml").read_text(), Loader=yaml.BaseLoader)
     assert infra["on"]["push"]["branches"] == ["main"]

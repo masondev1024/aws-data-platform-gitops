@@ -30,7 +30,7 @@
 - Terraform provider 초기화, 포맷 검사, validate
 - Python dependency audit, Bandit, Trivy IaC/secret/image gate, CodeQL
 
-애플리케이션 변경 시 CD workflow는 같은 커밋의 공통 검증을 통과한 뒤 이미지를 빌드합니다. 빌드한 이미지에 Trivy 검사를 수행한 후 `eu-west-1` ECR에 SHA 태그로 발행하고, digest가 고정된 배포 후보와 검증 기록을 artifact로 남깁니다. 기존 SHA 태그가 있으면 해당 digest를 다시 검사하며 덮어쓰지 않습니다. CD가 `main`이나 운영 매니페스트를 직접 수정하지는 않습니다. 후보를 검토해 별도 PR로 반영한 뒤 Argo CD가 `main`의 `k8s/overlays/prod` 변경을 감지하고 Argo Rollouts canary 절차를 수행합니다. 이미지 발행 성공과 실제 배포 성공은 별도로 확인해야 합니다. 검증 종료 후 ECR 저장소를 포함한 임시 AWS 리소스를 정리했으므로, **다음 이미지 발행 전에는 해당 계정·리전의 ECR 저장소와 필요한 권한을 다시 프로비저닝해야 합니다.** README만 갱신한다고 현재 배포가 재개되지는 않습니다.
+애플리케이션 변경 시 CD workflow의 공통 검증은 실행하지만, 이미지 발행은 `CD_PUBLISH_ENABLED=true`를 명시하고 같은 커밋의 검증을 통과했을 때만 진행합니다. 빌드한 이미지에 Trivy 검사를 수행한 후 `eu-west-1` ECR에 SHA 태그로 발행하고, digest가 고정된 배포 후보와 검증 기록을 artifact로 남깁니다. 기존 SHA 태그가 있으면 해당 digest를 다시 검사하며 덮어쓰지 않습니다. CD가 `main`이나 운영 매니페스트를 직접 수정하지는 않습니다. 후보를 검토해 별도 PR로 반영한 뒤 Argo CD가 `main`의 `k8s/overlays/prod` 변경을 감지하고 Argo Rollouts canary 절차를 수행합니다. 이미지 발행 성공과 실제 배포 성공은 별도로 확인해야 합니다. 검증 종료 후 ECR 저장소를 포함한 임시 AWS 리소스를 정리했으므로, **다음 이미지 발행 전에는 해당 계정·리전의 ECR 저장소와 필요한 권한을 다시 프로비저닝해야 합니다.** README만 갱신한다고 현재 배포가 재개되지는 않습니다.
 
 런타임 이미지는 Python 3.13 slim builder와 digest로 고정한 distroless Python 3.13 non-root runtime을 멀티스테이지로 분리합니다. 최종 이미지에는 shell과 package manager를 포함하지 않고 UID 65532로 실행하며, CD의 Trivy 정책은 수정 가능한 HIGH/CRITICAL만 차단하고 vendor fix가 없는 기본 이미지 CVE는 ECR 네이티브 스캔 결과와 분리해 추적합니다.
 
@@ -42,6 +42,8 @@ Terraform 적용 후 출력되는 `github_actions_role_arn` 값을 CD용 저장�
 Settings → Secrets and variables → Actions → Variables
 AWS_ROLE_TO_ASSUME=<terraform output github_actions_role_arn>
 ```
+
+검증 환경을 정리한 동안 `CD_PUBLISH_ENABLED`는 설정하지 않습니다. 다시 발행할 때는 ECR 저장소의 태그 불변성, OIDC role·권한, 비용·정리 계획을 확인한 뒤 저장소 변수 `CD_PUBLISH_ENABLED=true`를 명시합니다. 이 변수가 없으면 `main` push나 수동 실행에서도 이미지 발행 job만 건너뛰며 공통 검증과 별도의 Security/CodeQL 검사는 계속 실행됩니다.
 
 Terraform plan은 CD role과 분리된 별도 role을 사용해야 합니다. 전체 인프라 plan 권한과 EKS bootstrap CIDR을 정했을 때만 다음 변수를 추가합니다.
 

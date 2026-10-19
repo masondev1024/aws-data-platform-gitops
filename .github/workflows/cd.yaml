@@ -35,7 +35,7 @@ jobs:
   publish:
     name: Publish verified image and prepare GitOps candidate
     needs: platform-verify
-    if: github.ref == 'refs/heads/main'
+    if: ${{ github.ref == 'refs/heads/main' && vars.CD_PUBLISH_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

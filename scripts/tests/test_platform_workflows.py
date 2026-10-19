@@ -13,6 +13,7 @@ def test_cd_publish_waits_for_same_commit_platform_verification():
 
     assert "uses: ./.github/workflows/platform-verify.yaml" in workflow
     assert "publish:\n    name: Publish verified image and prepare GitOps candidate\n    needs: platform-verify" in workflow
+    assert "if: ${{ github.ref == 'refs/heads/main' && vars.CD_PUBLISH_ENABLED == 'true' }}" in workflow
     assert "permissions:\n  contents: read" in workflow
     assert "id-token: write" in workflow
     assert "attestations: write" in workflow
