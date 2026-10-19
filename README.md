@@ -1,8 +1,13 @@
-# AWS Data Platform GitOps
+# D2C 프로모션 응모 플랫폼 | AWS Data Platform GitOps
 
-기존 래플 트래픽 응모 시스템에서 구현하지 못했던 운영 인프라와 배포 자동화를 확장한 프로젝트입니다. AWS와 Terraform을 기반으로 EKS, ECR, GitHub Actions OIDC, Argo CD GitOps, Argo Rollouts canary 배포 흐름을 구성하고, 응모 승인과 이벤트 발행의 정합성을 transactional outbox로 보장합니다.
+온라인 프로모션에서는 응모가 몰리는 시간에도 고객에게 보여준 접수 결과와 후속 이벤트가 어긋나지 않아야 합니다. 새 버전을 배포하다 응모 API가 502를 내거나 이벤트가 빠지면, 고객은 접수 여부를 믿기 어렵고 운영팀도 어느 응모를 다시 처리해야 할지 판단하기 어렵습니다. 이 저장소는 **D2C 상품 프로모션의 응모 접수**를 대상으로, 데이터 정합성과 배포 안전성을 함께 검증한 플랫폼 실험입니다. 실제 상용 서비스를 운영 중이라는 뜻은 아닙니다.
 
-핵심 운영 가설은 `응모 승인 → 동일 DB 트랜잭션의 outbox 기록 → DB 기준 parity SLI → canary gate → 실패 시 stable 복귀`입니다. 애플리케이션 카운터의 단순 차이가 아니라 writer DB에서 최근 응모와 outbox row를 직접 대조하며, 측정 불능은 `-1`로 표시되어 canary를 fail-closed 합니다.
+| 해결하려는 문제 | 적용한 경계 | 2026-10-06 단기 AWS 검증 |
+|---|---|---|
+| 접수는 성공했는데 후속 이벤트가 누락됨 | 응모 row와 `raffle.entry.accepted.v1` outbox row를 같은 DB 트랜잭션에 기록하고, writer DB에서 누락 건수를 직접 측정 | 안정 기준선·카나리 부하에서 각각 응모 3,900/3,900, 관측 구간의 outbox parity gap 0 |
+| 행사 중 새 버전이 고객 응모 경로를 악화시킴 | 변경 전 13분 기준선을 통과한 뒤 10%·50% 카나리에서 Prometheus 정합성/오류 지표와 ALB 5xx/지연을 함께 확인 | 첫 기준선의 ALB 502는 게이트가 차단. 수정 후 기준선·카나리 각 HTTP 15,600/15,600, 실패 0. 단, 최종 승격은 CPU quota 수정과 수동 reconcile이 필요했음 |
+
+흐름은 `응모 접수 → 동일 DB 트랜잭션의 outbox 기록 → DB 기준 parity SLI → 배포 전 기준선 → 단계별 canary gate → 승격 또는 중단·복구`입니다. 애플리케이션 카운터 차이만 믿지 않고 writer DB에서 응모와 outbox를 대조합니다. 측정 불능은 `-1`로 표시해 카나리를 fail-closed 합니다. 이벤트의 Kafka 전송과 데이터 레이크 적재는 [별도 저장소](https://github.com/masondev1024/d2c-event-data-platform)의 책임이며, **이 저장소의 실험 수치만으로 전체 소비·적재 E2E를 입증하지는 않습니다.**
 
 ## 플랫폼 운영 검증
 
@@ -25,7 +30,7 @@
 - Terraform provider 초기화, 포맷 검사, validate
 - Python dependency audit, Bandit, Trivy IaC/secret/image gate, CodeQL
 
-애플리케이션 변경 시 CD workflow는 같은 커밋의 공통 검증을 통과한 뒤 이미지를 빌드합니다. 빌드한 이미지에 Trivy 검사를 수행한 후 `eu-west-1` ECR에 SHA 태그로 발행하고, digest가 고정된 배포 후보와 검증 기록을 artifact로 남깁니다. 기존 SHA 태그가 있으면 해당 digest를 다시 검사하며 덮어쓰지 않습니다. CD가 `main`이나 운영 매니페스트를 직접 수정하지는 않습니다. 후보를 검토해 별도 PR로 반영한 뒤 Argo CD가 `main`의 `k8s/overlays/prod` 변경을 감지하고 Argo Rollouts canary 절차를 수행합니다. 이미지 발행 성공과 실제 배포 성공은 별도로 확인해야 합니다.
+애플리케이션 변경 시 CD workflow는 같은 커밋의 공통 검증을 통과한 뒤 이미지를 빌드합니다. 빌드한 이미지에 Trivy 검사를 수행한 후 `eu-west-1` ECR에 SHA 태그로 발행하고, digest가 고정된 배포 후보와 검증 기록을 artifact로 남깁니다. 기존 SHA 태그가 있으면 해당 digest를 다시 검사하며 덮어쓰지 않습니다. CD가 `main`이나 운영 매니페스트를 직접 수정하지는 않습니다. 후보를 검토해 별도 PR로 반영한 뒤 Argo CD가 `main`의 `k8s/overlays/prod` 변경을 감지하고 Argo Rollouts canary 절차를 수행합니다. 이미지 발행 성공과 실제 배포 성공은 별도로 확인해야 합니다. 검증 종료 후 ECR 저장소를 포함한 임시 AWS 리소스를 정리했으므로, **다음 이미지 발행 전에는 해당 계정·리전의 ECR 저장소와 필요한 권한을 다시 프로비저닝해야 합니다.** README만 갱신한다고 현재 배포가 재개되지는 않습니다.
 
 런타임 이미지는 Python 3.13 slim builder와 digest로 고정한 distroless Python 3.13 non-root runtime을 멀티스테이지로 분리합니다. 최종 이미지에는 shell과 package manager를 포함하지 않고 UID 65532로 실행하며, CD의 Trivy 정책은 수정 가능한 HIGH/CRITICAL만 차단하고 vendor fix가 없는 기본 이미지 CVE는 ECR 네이티브 스캔 결과와 분리해 추적합니다.
 
@@ -167,8 +172,12 @@ python scripts/verify_gitops_deployment.py \
 ## 검증된 운영 증거와 범위
 
 - 새 세션의 원본 evidence, 부하 로그, 계정·리소스 식별자와 인증 정보는 로컬에 둡니다. 정적 검증과 실환경 결과를 구분하고 과거 결과를 현재 변경의 증거로 사용하지 않습니다.
-- 2026-10-06 AWS 단기 검증에서 Argo CD PreSync 마이그레이션, 안정 Rollout 4/4와 ALB target 4/4, HTTPS 준비도 150/150을 확인했습니다(자체 서명 인증서의 체인 검증은 제외). 그러나 13분 응모 기준 부하는 ALB 502 한 건으로 15,599/15,600 요청·3,899/3,900 응모에 그쳐 게이트가 차단했습니다. 제한된 재시도에서도 ALB 502가 재발해 카나리는 실행하지 않았습니다. Gunicorn/ALB 연결 유휴시간 설정은 수정했지만, 새 이미지의 실AWS 재검증 전에는 장애 해결이나 E2E 완료로 주장하지 않습니다.
-- 현재 기본 Terraform 프로필은 비용 보호를 위해 full-stack apply가 차단되어 있으며, 검증이 끝난 AWS 리소스는 상시 유지하지 않습니다.
+- 첫 2026-10-06 AWS 기준선은 ALB 502 한 건으로 HTTP 15,599/15,600, 응모 3,899/3,900에 그쳐 카나리 진입이 차단됐습니다. Gunicorn/ALB keep-alive 설정을 맞춘 뒤 새 세션에서 재검증했습니다. ALB access log가 없어 이전 502의 정확한 TCP 종료 원인은 확정하지 않습니다([수정 PR #39](https://github.com/masondev1024/aws-data-platform-gitops/pull/39)).
+- 재검증 세션의 안정 기준선과 카나리 부하는 **각각 13분**, HTTP **15,600/15,600**, 응모 **3,900/3,900**, 실패·dropped iteration **0**이었습니다. 응모 API p95는 각각 **107.9ms**, **113.5ms**였습니다. 10%·50% 실제 ALB 가중치와 서로 다른 서비스 엔드포인트를 확인했고, 단계별 AnalysisRun에서 Prometheus **3/3**, CloudWatch **3/3** 지표가 성공했습니다. 관측 구간의 ALB/target 5xx와 outbox parity gap은 **0**이었습니다. 이것은 해당 구간의 측정치이지 장기 무장애 보장이 아닙니다.
+- 최종 승격에서는 안정 4 Pod와 후보 4 Pod가 겹쳐 CPU limit 합계 8코어가 필요한데 namespace quota는 6코어여서 새 ReplicaSet 생성이 멈췄습니다. quota를 8코어로 수정하고 소유자를 확인한 제한된 수동 reconcile을 거친 뒤 Rollout Healthy를 확인했습니다([수정 PR #42](https://github.com/masondev1024/aws-data-platform-gitops/pull/42)). **자동 승격만으로 완료한 실험은 아닙니다.** 마지막 GitOps 재동기화 때 Ready가 잠시 2로 내려간 점도 남은 운영 과제입니다.
+- 승격 후 제한된 조회 계정으로 Argo 실행 revision·Pod imageID·Rollout Healthy를 확인하고, 외부 readiness **150/150**, 추가 응모 **10/10**을 확인했습니다. 같은 세션의 누적 HTTP 요청 원장은 **31,540건**입니다. 테스트 인증서는 자체 서명으로, 이 실험은 공인 인증서 체인 검증이나 상시 운영을 입증하지 않습니다.
+- 세션 종료 시 Terraform 리소스 **36개**를 삭제하고 state 0·live tagged 0·unresolved 0 및 주요 AWS API의 부재를 확인했습니다. 약 **1.77시간**의 사용량 기반 비용 **USD 2.448**과 예비비 USD 1을 합친 **USD 3.448은 계획 추정치**이며 실제 청구 확정액이 아닙니다. 현재 기본 Terraform 프로필은 full-stack apply를 차단하고, 검증 인프라를 상시 유지하지 않습니다.
+- 2026-10-19에는 만료된 OpenSSL VEX와 새 `libexpat1` 취약점 때문에 막힌 CI를, 수정된 패키지를 포함한 고정 Distroless 이미지로 교체하고 VEX 예외를 제거해 다시 통과시켰습니다. 이는 **소스·이미지 빌드·보안 검사 검증**이며 AWS에 재배포한 결과가 아닙니다. 위 10월 6일 지연·가용성 수치를 새 이미지의 성능이라고 해석하지 않습니다.
 - Kafka relay/consumer와 S3 lakehouse 흐름은 별도 [`d2c-event-data-platform`](https://github.com/masondev1024/d2c-event-data-platform) 저장소에서 운영 설계와 로컬 검증 증거를 관리합니다. 이 저장소는 그 앞단의 실제 D2C 서비스 승인 경계와 배포 플랫폼 증거를 담당합니다.
 
 ## 포트폴리오 핵심 시나리오
@@ -183,16 +192,16 @@ python scripts/verify_gitops_deployment.py \
 3. 승인 요청은 DB row와 transactional outbox event를 같은 트랜잭션으로 기록하고,
    writer DB parity SLI가 실제 데이터 정합성을 측정합니다.
 4. Argo Rollouts는 canary별 Prometheus 지표와 세션 ALB의 CloudWatch 5xx·target p95를
-   함께 확인해 승격하거나 stable로 자동 복귀시킵니다. ALB 신호는 전용 ALB 전체를
+   함께 확인해 진행 여부를 판단하고 실패 시 stable 경로를 유지·복구합니다. ALB 신호는 전용 ALB 전체를
    감시하고, canary 자체의 오류·정합성은 서비스 라벨이 붙은 Prometheus 지표가 맡습니다.
 5. Pod 종료에는 distroless 이미지에서 동작하는 preStop 대기와 60초 grace period를
    두고, live-lab ALB target drain은 30초로 제한합니다.
-6. 승인된 outbox는 별도 Kafka 이벤트 플랫폼에서 계약 검증·중복 제거·DLQ를 거쳐
-   S3 Parquet/Iceberg 계층으로 적재됩니다.
+6. outbox 이후 Kafka 이벤트 처리와 S3 Parquet/Iceberg 적재는 별도 저장소의 경계입니다.
+   이 실험의 응모·배포 측정치를 downstream 적재 성공 수치로 바꿔 말하지 않습니다.
 
-CloudWatch canary gate와 종료/drain 설정은 현재 GitOps 매니페스트 및 로컬 계약 테스트에
-반영되어 있습니다. 이번 수정분의 실AWS 재검증은 별도 기록이 확인되기 전까지 완료된
-것으로 간주하지 않습니다.
+CloudWatch canary gate와 종료/drain 설정은 GitOps 매니페스트 및 로컬 계약 테스트에
+반영되어 있습니다. 위 실AWS 결과는 2026-10-06의 고정된 revision·세션에 대한 기록입니다.
+이후 코드나 인프라 변경이 같은 성능·가용성을 유지한다고 자동으로 주장하지 않습니다.
 
 따라서 면접에서는 “Kafka를 사용했다”가 아니라, 내부 개발자 경험·배포 안전성·
 트랜잭션 정합성·데이터 레이크 소비까지 하나의 운영 경계로 설계한 이유와 실패 시

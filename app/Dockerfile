@@ -10,7 +10,7 @@ COPY requirements.txt ./
 RUN python -m pip install --upgrade pip==26.2.1 \
     && python -m pip install --no-cache-dir --target=/opt/python --requirement requirements.txt
 
-FROM gcr.io/distroless/python3-debian13:nonroot@sha256:8ee214843129f43e2ebf5e0ca9f2e4e6d8292143d1b8a6787f169b5898578884
+FROM gcr.io/distroless/python3-debian13:nonroot@sha256:f47f5807043391605425f2bd162b25f50cebdc90640bacc804e0177608fe5c65
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
