@@ -1,6 +1,3 @@
-import json
-import re
-from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -16,6 +13,7 @@ def test_cd_publish_waits_for_same_commit_platform_verification():
 
     assert "uses: ./.github/workflows/platform-verify.yaml" in workflow
     assert "publish:\n    name: Publish verified image and prepare GitOps candidate\n    needs: platform-verify" in workflow
+    assert "if: ${{ github.ref == 'refs/heads/main' && vars.CD_PUBLISH_ENABLED == 'true' }}" in workflow
     assert "permissions:\n  contents: read" in workflow
     assert "id-token: write" in workflow
     assert "attestations: write" in workflow
@@ -35,7 +33,7 @@ def test_cd_scans_new_images_before_first_push_and_binds_registry_digest():
     build_index = workflow.index('docker build --pull --tag "$image_uri:$IMAGE_TAG" ./app')
     inspect_local_index = workflow.index('local_image_id="$(docker image inspect', build_index)
     scan_index = workflow.index(
-        'trivy image --image-src docker --ignorefile .trivyignore --vex .security/vex/live-lab-openssl.openvex.json --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL',
+        'trivy image --image-src docker --ignorefile .trivyignore --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL',
         build_index,
     )
     push_index = workflow.index('docker push "$image_uri:$IMAGE_TAG"')
@@ -67,7 +65,7 @@ def test_cd_scans_existing_digest_from_local_docker_source():
     pull_existing_index = workflow.index('docker pull "$image_uri@$image_digest"', existing_digest_index)
     inspect_existing_index = workflow.index('registry_image_id="$(docker image inspect', pull_existing_index)
     scan_existing_index = workflow.index(
-        'trivy image --image-src docker --ignorefile .trivyignore --vex .security/vex/live-lab-openssl.openvex.json --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL',
+        'trivy image --image-src docker --ignorefile .trivyignore --exit-code 1 --ignore-unfixed --severity HIGH,CRITICAL',
         inspect_existing_index,
     )
 
@@ -82,39 +80,12 @@ def test_cd_fail_closed_for_registry_lookup_errors():
     assert 'exit "$describe_status"' in workflow
 
 
-def test_container_vex_is_package_and_version_scoped_and_expires_for_reassessment():
-    vex = json.loads(read(".security/vex/live-lab-openssl.openvex.json"))
-    statements = vex["statements"]
-
-    assert {item["vulnerability"]["name"] for item in statements} == {
-        "CVE-2026-75804",
-        "CVE-2026-84782",
-    }
-    assert len(statements) == 2
-    for statement in statements:
-        assert statement["products"] == [
-            {"@id": "pkg:deb/debian/libssl3t64@3.5.7-1~deb13u2"}
-        ]
-        assert statement["status"] == "not_affected"
-        assert statement["justification"] == "vulnerable_code_not_in_execute_path"
-        assert "reassess by" in statement["impact_statement"].lower()
-        deadline = re.search(
-            r"reassess by (\d{4}-\d{2}-\d{2})",
-            statement["impact_statement"],
-            re.IGNORECASE,
-        )
-        assert deadline is not None
-        remaining_days = (
-            datetime.fromisoformat(deadline.group(1)).date()
-            - datetime.now(timezone.utc).date()
-        ).days
-        assert 0 < remaining_days <= 14
-
+def test_container_scan_no_longer_uses_expired_openssl_vex():
     security = read(".github/workflows/security.yaml")
     cd = read(".github/workflows/cd.yaml")
-    vex_arg = "--vex .security/vex/live-lab-openssl.openvex.json"
-    assert security.count(vex_arg) == 1
-    assert cd.count(vex_arg) == 2
+    assert not (REPO_ROOT / ".security/vex/live-lab-openssl.openvex.json").exists()
+    assert "--vex" not in security
+    assert "--vex" not in cd
     assert "--ignore-unfixed --severity HIGH,CRITICAL" in security
     assert "--ignore-unfixed --severity HIGH,CRITICAL" in cd
     assert "CVE-2026-75804" not in read(".trivyignore")
