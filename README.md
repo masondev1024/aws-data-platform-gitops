@@ -177,6 +177,7 @@ python scripts/verify_gitops_deployment.py \
 - 최종 승격에서는 안정 4 Pod와 후보 4 Pod가 겹쳐 CPU limit 합계 8코어가 필요한데 namespace quota는 6코어여서 새 ReplicaSet 생성이 멈췄습니다. quota를 8코어로 수정하고 소유자를 확인한 제한된 수동 reconcile을 거친 뒤 Rollout Healthy를 확인했습니다([수정 PR #42](https://github.com/masondev1024/aws-data-platform-gitops/pull/42)). **자동 승격만으로 완료한 실험은 아닙니다.** 마지막 GitOps 재동기화 때 Ready가 잠시 2로 내려간 점도 남은 운영 과제입니다.
 - 승격 후 제한된 조회 계정으로 Argo 실행 revision·Pod imageID·Rollout Healthy를 확인하고, 외부 readiness **150/150**, 추가 응모 **10/10**을 확인했습니다. 같은 세션의 누적 HTTP 요청 원장은 **31,540건**입니다. 테스트 인증서는 자체 서명으로, 이 실험은 공인 인증서 체인 검증이나 상시 운영을 입증하지 않습니다.
 - 세션 종료 시 Terraform 리소스 **36개**를 삭제하고 state 0·live tagged 0·unresolved 0 및 주요 AWS API의 부재를 확인했습니다. 약 **1.77시간**의 사용량 기반 비용 **USD 2.448**과 예비비 USD 1을 합친 **USD 3.448은 계획 추정치**이며 실제 청구 확정액이 아닙니다. 현재 기본 Terraform 프로필은 full-stack apply를 차단하고, 검증 인프라를 상시 유지하지 않습니다.
+- 2026-10-19에는 만료된 OpenSSL VEX와 새 `libexpat1` 취약점 때문에 막힌 CI를, 수정된 패키지를 포함한 고정 Distroless 이미지로 교체하고 VEX 예외를 제거해 다시 통과시켰습니다. 이는 **소스·이미지 빌드·보안 검사 검증**이며 AWS에 재배포한 결과가 아닙니다. 위 10월 6일 지연·가용성 수치를 새 이미지의 성능이라고 해석하지 않습니다.
 - Kafka relay/consumer와 S3 lakehouse 흐름은 별도 [`d2c-event-data-platform`](https://github.com/masondev1024/d2c-event-data-platform) 저장소에서 운영 설계와 로컬 검증 증거를 관리합니다. 이 저장소는 그 앞단의 실제 D2C 서비스 승인 경계와 배포 플랫폼 증거를 담당합니다.
 
 ## 포트폴리오 핵심 시나리오
