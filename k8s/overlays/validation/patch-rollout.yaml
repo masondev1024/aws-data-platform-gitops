@@ -12,7 +12,12 @@
   path: /spec/template/spec/containers/0/env/-
   value:
     name: ALLOW_FAILURE_DRILL
-    value: "false"
+    value: "true"
+- op: add
+  path: /spec/template/spec/containers/0/env/-
+  value:
+    name: D2C_OUTBOX_FAILURE_INJECTION
+    value: before_outbox_insert
 - op: add
   path: /spec/template/spec/containers/0/volumeMounts
   value:
