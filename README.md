@@ -1,12 +1,32 @@
-# D2C 프로모션 응모 플랫폼 | AWS Data Platform GitOps
+# GitOps 배포·복구 · AWS Data Platform GitOps
 
-래플 팀 프로젝트의 응모 서비스를 바탕으로, 새 버전의 응답과 응모·outbox 정합성을 확인하는 배포 흐름을 구성했습니다.
+새 버전 배포 중에도 응모 접수 결과와 후속 이벤트가 어긋나지 않도록, **API 응답과 DB 정합성을 함께 확인하는 카나리 배포**를 구성한 프로젝트. 래플 팀 프로젝트 이후 개인 작업으로 배포 설정과 실패 후 복구 경로를 보강했습니다.
 
-- **개인 개선** · HPA가 정한 복제 수를 Argo CD가 덮어쓰지 않도록 설정하고, 구·신 버전이 함께 실행될 때 필요한 CPU를 합산해 할당량을 검사하는 회귀 테스트를 추가했습니다.
-- **AWS 카나리 부하 시험 · 2026.10.06** · 13분 동안 HTTP 15,600/15,600건과 응모 3,900/3,900건을 처리했습니다. 응모 API p95는 113.5ms였습니다.
-- **최종 승격 복구** · 카나리 분석을 통과한 뒤 CPU 할당량 부족으로 승격이 멈췄습니다. 검증 네임스페이스의 할당량을 6코어에서 8코어로 조정하고, 제한된 수동 reconcile 뒤 Rollout이 Healthy로 돌아온 것을 확인했습니다.
+## 맡은 범위
 
-[배포·복구 검증](https://jungseongheon.org/portfolio/evidence/index.html#gitops) · [CPU 할당량 검사 수정 PR #42](https://github.com/masondev1024/aws-data-platform-gitops/pull/42)
+- **HPA·GitOps 충돌 수정** · HPA가 정한 복제 수를 Argo CD가 덮어쓰지 않도록 설정. [수정 PR #41](https://github.com/masondev1024/aws-data-platform-gitops/pull/41)
+- **승격 전 자원 검사** · 구·신 버전이 동시에 실행될 때 필요한 CPU를 합산하도록 할당량 검사와 회귀 테스트 추가. [수정 PR #42](https://github.com/masondev1024/aws-data-platform-gitops/pull/42)
+
+## 구조 요약
+
+```text
+GitHub Actions → 이미지·배포 후보 → Argo CD → EKS·Argo Rollouts
+ALB → 응모 API → RDS(응모·outbox) → 정합성·오류 지표 → 배포 판단
+```
+
+Terraform으로 AWS 환경을 구성하고, Prometheus·CloudWatch 지표로 단계별 배포를 검사하는 구조. 응모와 outbox를 같은 DB 트랜잭션에 기록한 뒤 DB에서 누락 여부를 대조합니다. Kafka 이후 처리 경로는 [별도 저장소](https://github.com/masondev1024/d2c-event-data-platform)에서 관리합니다.
+
+## 확인한 결과
+
+**2026.10.06 단기 AWS 검증** 기준입니다.
+
+| 검증 대상 | 결과와 범위 |
+|---|---|
+| 13분 카나리 부하 | **HTTP 15,600/15,600건 성공**, 그중 응모 3,900/3,900건. 응모 API **p95 113.5ms** |
+| 응모·이벤트 정합성 | 기준선·카나리 관측 구간에서 응모 대비 outbox 누락 **0건** |
+| 승격 중단 후 복구 | CPU 할당량 **6 → 8코어** 조정과 수동 reconcile 후 Rollout Healthy 확인. 자동 복구 수치와 구분 |
+
+[배포·복구 검증 기록](https://jungseongheon.org/portfolio/evidence/index.html#gitops) · [포트폴리오 상세](https://jungseongheon.org/portfolio/#gitops) · [로컬 검증](#로컬-검증)
 
 ## 배포 시험의 범위
 
@@ -218,3 +238,4 @@ CloudWatch canary gate와 종료/drain 설정은 GitOps 매니페스트 및 로�
 따라서 면접에서는 “Kafka를 사용했다”가 아니라, 내부 개발자 경험·배포 안전성·
 트랜잭션 정합성·데이터 레이크 소비까지 하나의 운영 경계로 설계한 이유와 실패 시
 복구 경로를 시연할 수 있습니다.
+
